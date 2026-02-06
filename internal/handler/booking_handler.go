@@ -189,7 +189,7 @@ func (h *BookingHandler) ConfirmDeliveryByOwner(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.ConfirmDelivery(c.Request.Context(), bookingID)
+	result, err := h.service.CompleteBooking(c.Request.Context(), bookingID)
 	if err != nil {
 		response.Error(c, err)
 		return
