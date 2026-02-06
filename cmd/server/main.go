@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// Initialize logger
-	log, err := logger.NewNamed("development", "service-booking")
+	log, err := logger.NewNamed(cfg.AppEnv, "service-booking")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create logger: %v\n", err)
 		os.Exit(1)
@@ -59,11 +59,18 @@ func main() {
 		log.Fatal("failed to connect to database", zap.Error(err))
 	}
 
-	// Auto-migrate booking model
-	if err := db.AutoMigrate(&repository.BookingModel{}); err != nil {
-		log.Fatal("failed to run auto-migration", zap.Error(err))
+	// Run database migrations
+	if cfg.AppEnv == "development" {
+		if err := db.AutoMigrate(&repository.BookingModel{}); err != nil {
+			log.Fatal("failed to run auto-migration", zap.Error(err))
+		}
+		log.Info("database migration completed (dev auto-migrate)")
+	} else {
+		dbURL := dbConfig.DatabaseURL()
+		if err := database.RunMigrations(dbURL, "migrations", log); err != nil {
+			log.Fatal("failed to run migrations", zap.Error(err))
+		}
 	}
-	log.Info("database migration completed")
 
 	// Initialize JWT manager
 	jwtManager := auth.NewJWTManager(

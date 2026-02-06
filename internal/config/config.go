@@ -6,9 +6,10 @@ import (
 
 // ServiceConfig holds all configuration for the booking service.
 type ServiceConfig struct {
-	Port      string
-	DBConfig  config.DatabaseConfig
-	JWTConfig config.JWTConfig
+	Port        string
+	AppEnv      string
+	DBConfig    config.DatabaseConfig
+	JWTConfig   config.JWTConfig
 	KafkaConfig config.KafkaConfig
 }
 
@@ -21,6 +22,7 @@ func Load() (*ServiceConfig, error) {
 
 	return &ServiceConfig{
 		Port:        config.GetServicePort(v, "SERVICE_PORT"),
+		AppEnv:      config.GetAppEnv(v),
 		DBConfig:    config.LoadDatabaseConfig(v, "DB_NAME"),
 		JWTConfig:   config.LoadJWTConfig(v),
 		KafkaConfig: config.LoadKafkaConfig(v),

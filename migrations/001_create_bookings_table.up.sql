@@ -1,8 +1,3 @@
--- 001_create_bookings_table.sql
--- Creates the main bookings table for the booking service.
-
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 CREATE TABLE IF NOT EXISTS bookings (
     id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     booking_number        VARCHAR(20) NOT NULL UNIQUE,
