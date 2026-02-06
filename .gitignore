@@ -3,8 +3,8 @@
 *.dll
 *.so
 *.dylib
-server
-server-linux
+/server
+/server-linux
 
 # IDE
 .idea/
