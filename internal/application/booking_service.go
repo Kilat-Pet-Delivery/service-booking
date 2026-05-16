@@ -68,21 +68,17 @@ func NewBookingService(
 	pricing bookingDomain.PricingStrategy,
 	producer *kafka.Producer,
 	logger *zap.Logger,
+	db *gorm.DB,
+	declineRepo *repository.GormDeclineReasonRepository,
 ) *BookingService {
 	return &BookingService{
-		repo:     repo,
-		pricing:  pricing,
-		producer: producer,
-		logger:   logger,
+		repo:        repo,
+		pricing:     pricing,
+		producer:    producer,
+		logger:      logger,
+		db:          db,
+		declineRepo: declineRepo,
 	}
-}
-
-// WithDeclineSupport wires a DB handle and decline reason repo into the service.
-// Called after NewBookingService when the decline endpoint is active.
-func (s *BookingService) WithDeclineSupport(db *gorm.DB, declineRepo *repository.GormDeclineReasonRepository) *BookingService {
-	s.db = db
-	s.declineRepo = declineRepo
-	return s
 }
 
 // CreateBooking creates a new booking for the given owner.
@@ -427,6 +423,10 @@ func (s *BookingService) DeclineBooking(ctx context.Context, bookingID, runnerID
 	}); err != nil {
 		return nil, err
 	}
+
+	// TODO(decline-event): re-emit booking.requested or add a new booking.declined event
+	// so service-notification and any future dispatcher can re-offer this booking.
+	// Tracked as a follow-up to Phase 3 of the app-runner design system plan.
 
 	result := toBookingDTO(bk)
 	return &result, nil

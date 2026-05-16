@@ -97,7 +97,9 @@ func main() {
 		pricingStrategy,
 		kafkaProducer,
 		log,
-	).WithDeclineSupport(db, declineRepo)
+		db,
+		declineRepo,
+	)
 
 	// Initialize and start payment event consumer in a goroutine
 	ctx, cancel := context.WithCancel(context.Background())

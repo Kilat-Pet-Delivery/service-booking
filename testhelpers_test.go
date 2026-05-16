@@ -123,9 +123,10 @@ func setupBookingStack(t *testing.T, db *gorm.DB, brokers []string) *bookingStac
 	logger, _ := zap.NewDevelopment()
 
 	bookingRepo := repository.NewGormBookingRepository(db)
+	declineRepo := repository.NewGormDeclineReasonRepository(db)
 	pricing := bookingDomain.NewStandardPricingStrategy()
 	producer := kafka.NewProducer(brokers, logger)
-	bookingSvc := application.NewBookingService(bookingRepo, pricing, producer, logger)
+	bookingSvc := application.NewBookingService(bookingRepo, pricing, producer, logger, db, declineRepo)
 
 	groupID := fmt.Sprintf("test-booking-%s", uuid.New().String()[:8])
 	consumer := bookingEvents.NewPaymentEventConsumer(brokers, groupID, bookingSvc, logger)

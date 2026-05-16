@@ -48,8 +48,7 @@ func setupDeclineStack(t *testing.T, db *gorm.DB) *declineTestStack {
 	pricing := bookingDomain.NewStandardPricingStrategy()
 
 	// Use a no-op Kafka producer (nil) — decline doesn't publish events.
-	svc := application.NewBookingService(bookingRepo, pricing, nil, logger).
-		WithDeclineSupport(db, declineRepo)
+	svc := application.NewBookingService(bookingRepo, pricing, nil, logger, db, declineRepo)
 
 	bookingHandler := handler.NewBookingHandler(svc)
 
