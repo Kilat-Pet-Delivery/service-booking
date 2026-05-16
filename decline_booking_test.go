@@ -111,6 +111,44 @@ func seedAcceptedBooking(t *testing.T, db *gorm.DB, bookingID, ownerID, runnerID
 	require.NoError(t, db.Create(&model).Error)
 }
 
+// seedInProgressBooking inserts a booking in "in_progress" state.
+func seedInProgressBooking(t *testing.T, db *gorm.DB, bookingID, ownerID, runnerID uuid.UUID) {
+	t.Helper()
+	petSpec, _ := json.Marshal(map[string]interface{}{
+		"pet_type": "dog", "name": "Buddy", "weight_kg": 8.0,
+	})
+	crateReq, _ := json.Marshal(map[string]interface{}{
+		"minimum_size": "medium", "needs_ventilation": true, "minimum_weight_capacity": 9.6,
+	})
+	pickup, _ := json.Marshal(map[string]interface{}{
+		"line1": "5 Pickup Ln", "city": "KL", "state": "WP",
+		"country": "MY", "latitude": 3.14, "longitude": 101.69,
+	})
+	dropoff, _ := json.Marshal(map[string]interface{}{
+		"line1": "6 Dropoff Ln", "city": "KL", "state": "WP",
+		"country": "MY", "latitude": 3.16, "longitude": 101.72,
+	})
+	now := time.Now().UTC()
+	model := repository.BookingModel{
+		ID:                  bookingID,
+		BookingNumber:       fmt.Sprintf("BK-INP%s", uuid.New().String()[:6]),
+		OwnerID:             ownerID,
+		RunnerID:            &runnerID,
+		Status:              "in_progress",
+		PetSpec:             petSpec,
+		CrateRequirement:    crateReq,
+		PickupAddress:       pickup,
+		DropoffAddress:      dropoff,
+		EstimatedPriceCents: 150000,
+		Currency:            "MYR",
+		Notes:               "in-progress booking test",
+		Version:             3,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	require.NoError(t, db.Create(&model).Error)
+}
+
 // seedCompletedBooking inserts a booking in "completed" state.
 func seedCompletedBooking(t *testing.T, db *gorm.DB, bookingID, ownerID, runnerID uuid.UUID) {
 	t.Helper()
@@ -255,6 +293,25 @@ func TestDeclineBooking_AlreadyCompleted_Returns409(t *testing.T) {
 	ownerID := uuid.New()
 	runnerID := uuid.New()
 	seedCompletedBooking(t, infra.DB, bookingID, ownerID, runnerID)
+
+	token := runnerToken(t, stack.JWTManager, runnerID)
+	w := doDeclineRequest(t, stack.Router, bookingID, token, "too_far")
+
+	assert.Equal(t, http.StatusConflict, w.Code, "expected 409, got: %s", w.Body.String())
+}
+
+// TestDeclineBooking_AlreadyInProgress_Returns409 verifies that attempting to decline a
+// booking that is already in "in_progress" state returns 409 Conflict (not 422).
+func TestDeclineBooking_AlreadyInProgress_Returns409(t *testing.T) {
+	infra := setupContainers(t)
+	defer infra.Cleanup()
+
+	stack := setupDeclineStack(t, infra.DB)
+
+	bookingID := uuid.New()
+	ownerID := uuid.New()
+	runnerID := uuid.New()
+	seedInProgressBooking(t, infra.DB, bookingID, ownerID, runnerID)
 
 	token := runnerToken(t, stack.JWTManager, runnerID)
 	w := doDeclineRequest(t, stack.Router, bookingID, token, "too_far")

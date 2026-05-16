@@ -398,10 +398,11 @@ func (s *BookingService) DeclineBooking(ctx context.Context, bookingID, runnerID
 		return nil, domain.NewForbiddenError("not your booking")
 	}
 
-	// Guard: terminal or non-declinable status → 409.
-	switch bk.Status() {
-	case bookingDomain.StatusDelivered, bookingDomain.StatusCompleted, bookingDomain.StatusCancelled:
-		return nil, domain.NewConflictError("cannot decline booking in state '" + bk.Status().String() + "'")
+	// Guard: only accepted bookings may be declined; anything else → 409.
+	if bk.Status() != bookingDomain.StatusAccepted {
+		return nil, domain.NewConflictError(
+			fmt.Sprintf("cannot decline booking in state '%s'", bk.Status()),
+		)
 	}
 
 	// Apply domain transition (clears runnerID, sets status back to requested).
