@@ -33,6 +33,7 @@ func (h *BookingHandler) RegisterRoutes(r *gin.RouterGroup, jwtManager *auth.JWT
 		bookings.GET("", h.ListBookings)
 		bookings.GET("/:id", h.GetBooking)
 		bookings.POST("/:id/accept", middleware.RequireRole(auth.RoleRunner), h.AcceptBooking)
+		bookings.POST("/:id/decline", middleware.RequireRole(auth.RoleRunner), h.DeclineBooking)
 		bookings.POST("/:id/pickup", middleware.RequireRole(auth.RoleRunner), h.StartDelivery)
 		bookings.POST("/:id/deliver", middleware.RequireRole(auth.RoleRunner), h.ConfirmDelivery)
 		bookings.POST("/:id/confirm", middleware.RequireRole(auth.RoleOwner), h.ConfirmDeliveryByOwner)

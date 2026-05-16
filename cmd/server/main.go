@@ -85,6 +85,7 @@ func main() {
 
 	// Initialize repositories
 	bookingRepo := repository.NewGormBookingRepository(db)
+	declineRepo := repository.NewGormDeclineReasonRepository(db)
 	petRepo := repository.NewGormPetRepository(db)
 
 	// Initialize pricing strategy
@@ -96,7 +97,7 @@ func main() {
 		pricingStrategy,
 		kafkaProducer,
 		log,
-	)
+	).WithDeclineSupport(db, declineRepo)
 
 	// Initialize and start payment event consumer in a goroutine
 	ctx, cancel := context.WithCancel(context.Background())

@@ -11,8 +11,10 @@ import (
 	"github.com/Kilat-Pet-Delivery/lib-proto/dto"
 	"github.com/Kilat-Pet-Delivery/lib-proto/events"
 	bookingDomain "github.com/Kilat-Pet-Delivery/service-booking/internal/domain/booking"
+	"github.com/Kilat-Pet-Delivery/service-booking/internal/repository"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // CreateBookingRequest holds the data needed to create a new booking.
@@ -52,10 +54,12 @@ type BookingDTO struct {
 
 // BookingService is the application service orchestrating booking use cases.
 type BookingService struct {
-	repo     bookingDomain.BookingRepository
-	pricing  bookingDomain.PricingStrategy
-	producer *kafka.Producer
-	logger   *zap.Logger
+	repo        bookingDomain.BookingRepository
+	declineRepo *repository.GormDeclineReasonRepository
+	db          *gorm.DB
+	pricing     bookingDomain.PricingStrategy
+	producer    *kafka.Producer
+	logger      *zap.Logger
 }
 
 // NewBookingService creates a new BookingService.
@@ -71,6 +75,14 @@ func NewBookingService(
 		producer: producer,
 		logger:   logger,
 	}
+}
+
+// WithDeclineSupport wires a DB handle and decline reason repo into the service.
+// Called after NewBookingService when the decline endpoint is active.
+func (s *BookingService) WithDeclineSupport(db *gorm.DB, declineRepo *repository.GormDeclineReasonRepository) *BookingService {
+	s.db = db
+	s.declineRepo = declineRepo
+	return s
 }
 
 // CreateBooking creates a new booking for the given owner.
@@ -371,6 +383,52 @@ func (s *BookingService) RebookBooking(ctx context.Context, ownerID, originalBoo
 	}
 
 	return s.CreateBooking(ctx, ownerID, req)
+}
+
+// DeclineBooking allows an authenticated runner to decline a booking they accepted.
+// It persists the reason and transitions the booking back to "requested" in a single transaction.
+func (s *BookingService) DeclineBooking(ctx context.Context, bookingID, runnerID uuid.UUID, reason string) (*BookingDTO, error) {
+	bk, err := s.repo.FindByID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Authorization: the caller must be the runner assigned to this booking.
+	if bk.RunnerID() == nil || *bk.RunnerID() != runnerID {
+		return nil, domain.NewForbiddenError("not your booking")
+	}
+
+	// Guard: terminal or non-declinable status → 409.
+	switch bk.Status() {
+	case bookingDomain.StatusDelivered, bookingDomain.StatusCompleted, bookingDomain.StatusCancelled:
+		return nil, domain.NewConflictError("cannot decline booking in state '" + bk.Status().String() + "'")
+	}
+
+	// Apply domain transition (clears runnerID, sets status back to requested).
+	if err := bk.Decline(reason); err != nil {
+		return nil, err
+	}
+	bk.IncrementVersion()
+
+	// Persist booking update + decline reason in a single transaction.
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Update booking via the existing repo, which uses s.db internally.
+		// We pass a tx-scoped repo so both writes share the same transaction.
+		txBookingRepo := repository.NewGormBookingRepository(tx)
+		if err := txBookingRepo.Update(ctx, bk); err != nil {
+			return err
+		}
+
+		if err := s.declineRepo.RecordDecline(ctx, tx, bookingID, runnerID, reason); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	result := toBookingDTO(bk)
+	return &result, nil
 }
 
 // --- Admin methods ---

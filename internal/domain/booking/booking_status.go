@@ -17,7 +17,7 @@ const (
 // validTransitions defines the state machine for booking status transitions.
 var validTransitions = map[BookingStatus][]BookingStatus{
 	StatusRequested:  {StatusAccepted, StatusCancelled},
-	StatusAccepted:   {StatusInProgress, StatusCancelled},
+	StatusAccepted:   {StatusInProgress, StatusCancelled, StatusRequested},
 	StatusInProgress: {StatusDelivered, StatusCancelled},
 	StatusDelivered:  {StatusCompleted},
 	StatusCompleted:  {},

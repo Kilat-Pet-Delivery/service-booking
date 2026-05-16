@@ -297,6 +297,21 @@ func (b *Booking) Cancel(reason string) error {
 	return nil
 }
 
+// Decline transitions the booking from accepted back to requested,
+// clearing the runner assignment so the dispatcher can re-offer it.
+func (b *Booking) Decline(reason string) error {
+	if !b.status.CanTransitionTo(StatusRequested) {
+		return domain.NewInvalidStateError(string(b.status), string(StatusRequested))
+	}
+	if reason == "" {
+		return domain.NewValidationError("decline reason is required")
+	}
+	b.status = StatusRequested
+	b.runnerID = nil
+	b.updatedAt = time.Now().UTC()
+	return nil
+}
+
 // IncrementVersion bumps the version for optimistic locking.
 func (b *Booking) IncrementVersion() {
 	b.version++
