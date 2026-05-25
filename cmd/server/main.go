@@ -61,7 +61,7 @@ func main() {
 
 	// Run database migrations
 	if cfg.AppEnv == "development" {
-		if err := db.AutoMigrate(&repository.BookingModel{}, &repository.PetModel{}, &repository.PhotoModel{}); err != nil {
+		if err := db.AutoMigrate(&repository.BookingModel{}, &repository.PetModel{}, &repository.PhotoModel{}, &repository.ProofOfDeliveryModel{}); err != nil {
 			log.Fatal("failed to run auto-migration", zap.Error(err))
 		}
 		log.Info("database migration completed (dev auto-migrate)")

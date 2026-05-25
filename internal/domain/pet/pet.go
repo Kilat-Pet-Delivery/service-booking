@@ -24,7 +24,10 @@ type Pet struct {
 	breed             string
 	weightKg          float64
 	ageMonths         int
+	temperament       []string
 	allergies         string
+	vetContactName    string
+	vetContactPhone   string
 	specialNeeds      string
 	notes             string
 	photoURL          string
@@ -41,7 +44,8 @@ func NewPet(
 	name, petType, breed string,
 	weightKg float64,
 	ageMonths int,
-	allergies, specialNeeds, notes, photoURL, vaccinationStatus string,
+	temperament []string,
+	allergies, vetContactName, vetContactPhone, specialNeeds, notes, photoURL, vaccinationStatus string,
 ) (*Pet, error) {
 	if ownerID == uuid.Nil {
 		return nil, fmt.Errorf("owner ID is required")
@@ -62,7 +66,10 @@ func NewPet(
 		breed:             breed,
 		weightKg:          weightKg,
 		ageMonths:         ageMonths,
+		temperament:       cloneStrings(temperament),
 		allergies:         allergies,
+		vetContactName:    vetContactName,
+		vetContactPhone:   vetContactPhone,
 		specialNeeds:      specialNeeds,
 		notes:             notes,
 		photoURL:          photoURL,
@@ -80,7 +87,8 @@ func Reconstruct(
 	name, petType, breed string,
 	weightKg float64,
 	ageMonths int,
-	allergies, specialNeeds, notes, photoURL, vaccinationStatus string,
+	temperament []string,
+	allergies, vetContactName, vetContactPhone, specialNeeds, notes, photoURL, vaccinationStatus string,
 	status PetStatus,
 	version int64,
 	createdAt, updatedAt time.Time,
@@ -93,7 +101,10 @@ func Reconstruct(
 		breed:             breed,
 		weightKg:          weightKg,
 		ageMonths:         ageMonths,
+		temperament:       cloneStrings(temperament),
 		allergies:         allergies,
+		vetContactName:    vetContactName,
+		vetContactPhone:   vetContactPhone,
 		specialNeeds:      specialNeeds,
 		notes:             notes,
 		photoURL:          photoURL,
@@ -107,22 +118,25 @@ func Reconstruct(
 
 // --- Getters ---
 
-func (p *Pet) ID() uuid.UUID          { return p.id }
-func (p *Pet) OwnerID() uuid.UUID     { return p.ownerID }
-func (p *Pet) Name() string           { return p.name }
-func (p *Pet) PetType() string        { return p.petType }
-func (p *Pet) Breed() string          { return p.breed }
-func (p *Pet) WeightKg() float64      { return p.weightKg }
-func (p *Pet) AgeMonths() int         { return p.ageMonths }
-func (p *Pet) Allergies() string      { return p.allergies }
-func (p *Pet) SpecialNeeds() string   { return p.specialNeeds }
-func (p *Pet) Notes() string          { return p.notes }
-func (p *Pet) PhotoURL() string       { return p.photoURL }
+func (p *Pet) ID() uuid.UUID             { return p.id }
+func (p *Pet) OwnerID() uuid.UUID        { return p.ownerID }
+func (p *Pet) Name() string              { return p.name }
+func (p *Pet) PetType() string           { return p.petType }
+func (p *Pet) Breed() string             { return p.breed }
+func (p *Pet) WeightKg() float64         { return p.weightKg }
+func (p *Pet) AgeMonths() int            { return p.ageMonths }
+func (p *Pet) Temperament() []string     { return cloneStrings(p.temperament) }
+func (p *Pet) Allergies() string         { return p.allergies }
+func (p *Pet) VetContactName() string    { return p.vetContactName }
+func (p *Pet) VetContactPhone() string   { return p.vetContactPhone }
+func (p *Pet) SpecialNeeds() string      { return p.specialNeeds }
+func (p *Pet) Notes() string             { return p.notes }
+func (p *Pet) PhotoURL() string          { return p.photoURL }
 func (p *Pet) VaccinationStatus() string { return p.vaccinationStatus }
-func (p *Pet) Status() PetStatus      { return p.status }
-func (p *Pet) Version() int64         { return p.version }
-func (p *Pet) CreatedAt() time.Time   { return p.createdAt }
-func (p *Pet) UpdatedAt() time.Time   { return p.updatedAt }
+func (p *Pet) Status() PetStatus         { return p.status }
+func (p *Pet) Version() int64            { return p.version }
+func (p *Pet) CreatedAt() time.Time      { return p.createdAt }
+func (p *Pet) UpdatedAt() time.Time      { return p.updatedAt }
 
 // --- Behavior ---
 
@@ -136,7 +150,8 @@ func (p *Pet) Update(
 	name, petType, breed string,
 	weightKg float64,
 	ageMonths int,
-	allergies, specialNeeds, notes, photoURL, vaccinationStatus string,
+	temperament []string,
+	allergies, vetContactName, vetContactPhone, specialNeeds, notes, photoURL, vaccinationStatus string,
 ) {
 	if name != "" {
 		p.name = name
@@ -153,8 +168,17 @@ func (p *Pet) Update(
 	if ageMonths > 0 {
 		p.ageMonths = ageMonths
 	}
+	if temperament != nil {
+		p.temperament = cloneStrings(temperament)
+	}
 	if allergies != "" {
 		p.allergies = allergies
+	}
+	if vetContactName != "" {
+		p.vetContactName = vetContactName
+	}
+	if vetContactPhone != "" {
+		p.vetContactPhone = vetContactPhone
 	}
 	if specialNeeds != "" {
 		p.specialNeeds = specialNeeds
@@ -182,4 +206,11 @@ func (p *Pet) Archive() {
 // IsActive returns true if the pet profile is active.
 func (p *Pet) IsActive() bool {
 	return p.status == PetStatusActive
+}
+
+func cloneStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append([]string(nil), values...)
 }

@@ -31,13 +31,19 @@ func (h *BookingHandler) RegisterRoutes(r *gin.RouterGroup, jwtManager *auth.JWT
 	{
 		bookings.POST("", middleware.RequireRole(auth.RoleOwner), h.CreateBooking)
 		bookings.GET("", h.ListBookings)
+		bookings.GET("/history", h.GetHistory)
+		bookings.GET("/scheduled", h.GetScheduled)
 		bookings.GET("/:id", h.GetBooking)
 		bookings.POST("/:id/accept", middleware.RequireRole(auth.RoleRunner), h.AcceptBooking)
 		bookings.POST("/:id/decline", middleware.RequireRole(auth.RoleRunner), h.DeclineBooking)
+		bookings.POST("/:id/arrive-pickup", middleware.RequireRole(auth.RoleRunner), h.ArriveAtPickup)
 		bookings.POST("/:id/pickup", middleware.RequireRole(auth.RoleRunner), h.StartDelivery)
+		bookings.POST("/:id/proof-of-delivery", middleware.RequireRole(auth.RoleRunner), h.SubmitProofOfDelivery)
 		bookings.POST("/:id/deliver", middleware.RequireRole(auth.RoleRunner), h.ConfirmDelivery)
+		bookings.POST("/:id/complete", h.CompleteDelivery)
 		bookings.POST("/:id/confirm", middleware.RequireRole(auth.RoleOwner), h.ConfirmDeliveryByOwner)
 		bookings.POST("/:id/cancel", h.CancelBooking)
+		bookings.POST("/:id/cancel-active", h.CancelActiveDelivery)
 		bookings.POST("/:id/rebook", middleware.RequireRole(auth.RoleOwner), h.RebookBooking)
 	}
 }
@@ -109,6 +115,36 @@ func (h *BookingHandler) ListBookings(c *gin.Context) {
 	}
 }
 
+// GetHistory handles GET /api/v1/bookings/history.
+func (h *BookingHandler) GetHistory(c *gin.Context) {
+	userID, role, ok := authContext(c)
+	if !ok {
+		return
+	}
+	page, limit := parsePagination(c)
+	result, err := h.service.GetJobHistory(c.Request.Context(), userID, string(role), page, limit)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Paginated(c, result.Items, result.Total, result.Page, result.Limit)
+}
+
+// GetScheduled handles GET /api/v1/bookings/scheduled.
+func (h *BookingHandler) GetScheduled(c *gin.Context) {
+	userID, role, ok := authContext(c)
+	if !ok {
+		return
+	}
+	page, limit := parsePagination(c)
+	result, err := h.service.GetScheduledBookings(c.Request.Context(), userID, string(role), page, limit)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Paginated(c, result.Items, result.Total, result.Page, result.Limit)
+}
+
 // GetBooking handles GET /api/v1/bookings/:id.
 func (h *BookingHandler) GetBooking(c *gin.Context) {
 	bookingID, err := uuid.Parse(c.Param("id"))
@@ -149,6 +185,23 @@ func (h *BookingHandler) AcceptBooking(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// ArriveAtPickup handles POST /api/v1/bookings/:id/arrive-pickup.
+func (h *BookingHandler) ArriveAtPickup(c *gin.Context) {
+	bookingID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "invalid booking ID")
+		return
+	}
+
+	result, err := h.service.ArriveAtPickup(c.Request.Context(), bookingID)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	response.Success(c, result)
+}
+
 // StartDelivery handles POST /api/v1/bookings/:id/pickup.
 func (h *BookingHandler) StartDelivery(c *gin.Context) {
 	bookingID, err := uuid.Parse(c.Param("id"))
@@ -166,6 +219,33 @@ func (h *BookingHandler) StartDelivery(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// SubmitProofOfDelivery handles POST /api/v1/bookings/:id/proof-of-delivery.
+func (h *BookingHandler) SubmitProofOfDelivery(c *gin.Context) {
+	bookingID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "invalid booking ID")
+		return
+	}
+	runnerID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req application.ProofOfDeliveryRequest
+	if err := c.ShouldBind(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	result, err := h.service.SubmitProofOfDelivery(c.Request.Context(), bookingID, runnerID, req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Created(c, result)
+}
+
 // ConfirmDelivery handles POST /api/v1/bookings/:id/deliver (runner marks delivered).
 func (h *BookingHandler) ConfirmDelivery(c *gin.Context) {
 	bookingID, err := uuid.Parse(c.Param("id"))
@@ -175,6 +255,23 @@ func (h *BookingHandler) ConfirmDelivery(c *gin.Context) {
 	}
 
 	result, err := h.service.ConfirmDelivery(c.Request.Context(), bookingID)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// CompleteDelivery handles POST /api/v1/bookings/:id/complete.
+func (h *BookingHandler) CompleteDelivery(c *gin.Context) {
+	bookingID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "invalid booking ID")
+		return
+	}
+
+	result, err := h.service.CompleteDelivery(c.Request.Context(), bookingID)
 	if err != nil {
 		response.Error(c, err)
 		return
@@ -228,6 +325,34 @@ func (h *BookingHandler) CancelBooking(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// CancelActiveDelivery handles POST /api/v1/bookings/:id/cancel-active.
+func (h *BookingHandler) CancelActiveDelivery(c *gin.Context) {
+	bookingID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "invalid booking ID")
+		return
+	}
+
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body)
+
+	result, err := h.service.CancelActiveDelivery(c.Request.Context(), bookingID, userID, body.Reason)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	response.Success(c, result)
+}
+
 // RebookBooking handles POST /api/v1/bookings/:id/rebook.
 func (h *BookingHandler) RebookBooking(c *gin.Context) {
 	bookingID, err := uuid.Parse(c.Param("id"))
@@ -249,6 +374,20 @@ func (h *BookingHandler) RebookBooking(c *gin.Context) {
 	}
 
 	response.Created(c, result)
+}
+
+func authContext(c *gin.Context) (uuid.UUID, auth.UserRole, bool) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return uuid.Nil, "", false
+	}
+	role, ok := middleware.GetUserRole(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return uuid.Nil, "", false
+	}
+	return userID, role, true
 }
 
 // parsePagination extracts page and limit query parameters with defaults.

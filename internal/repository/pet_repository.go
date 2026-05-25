@@ -20,7 +20,10 @@ type PetModel struct {
 	Breed             string    `gorm:"type:varchar(100)"`
 	WeightKg          float64   `gorm:"type:decimal(5,2)"`
 	AgeMonths         int       `gorm:"type:int"`
+	Temperament       []string  `gorm:"serializer:json;type:jsonb"`
 	Allergies         string    `gorm:"type:text"`
+	VetContactName    string    `gorm:"type:varchar(255)"`
+	VetContactPhone   string    `gorm:"type:varchar(30)"`
 	SpecialNeeds      string    `gorm:"type:text"`
 	Notes             string    `gorm:"type:text"`
 	PhotoURL          string    `gorm:"type:text"`
@@ -106,7 +109,10 @@ func toPetModel(p *petDomain.Pet) *PetModel {
 		Breed:             p.Breed(),
 		WeightKg:          p.WeightKg(),
 		AgeMonths:         p.AgeMonths(),
+		Temperament:       p.Temperament(),
 		Allergies:         p.Allergies(),
+		VetContactName:    p.VetContactName(),
+		VetContactPhone:   p.VetContactPhone(),
 		SpecialNeeds:      p.SpecialNeeds(),
 		Notes:             p.Notes(),
 		PhotoURL:          p.PhotoURL(),
@@ -123,7 +129,8 @@ func toPetDomain(m *PetModel) *petDomain.Pet {
 		m.ID, m.OwnerID,
 		m.Name, m.PetType, m.Breed,
 		m.WeightKg, m.AgeMonths,
-		m.Allergies, m.SpecialNeeds, m.Notes,
+		m.Temperament,
+		m.Allergies, m.VetContactName, m.VetContactPhone, m.SpecialNeeds, m.Notes,
 		m.PhotoURL, m.VaccinationStatus,
 		petDomain.PetStatus(m.Status),
 		m.Version,

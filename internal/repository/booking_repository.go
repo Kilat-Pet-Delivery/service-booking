@@ -30,6 +30,7 @@ type BookingModel struct {
 	FinalPriceCents     *int64          `gorm:""`
 	Currency            string          `gorm:"not null;size:3;default:'MYR'"`
 	ScheduledAt         *time.Time      `gorm:""`
+	ArrivedAtPickup     *time.Time      `gorm:""`
 	PickedUpAt          *time.Time      `gorm:""`
 	DeliveredAt         *time.Time      `gorm:""`
 	CancelledAt         *time.Time      `gorm:""`
@@ -166,23 +167,24 @@ func (r *GormBookingRepository) Update(ctx context.Context, bk *bookingDomain.Bo
 		Where("id = ? AND version = ?", model.ID, expectedVersion).
 		Updates(map[string]interface{}{
 			"runner_id":             model.RunnerID,
-			"status":               model.Status,
-			"pet_spec":             model.PetSpec,
-			"crate_requirement":    model.CrateRequirement,
-			"pickup_address":       model.PickupAddress,
-			"dropoff_address":      model.DropoffAddress,
-			"route_spec":           model.RouteSpec,
+			"status":                model.Status,
+			"pet_spec":              model.PetSpec,
+			"crate_requirement":     model.CrateRequirement,
+			"pickup_address":        model.PickupAddress,
+			"dropoff_address":       model.DropoffAddress,
+			"route_spec":            model.RouteSpec,
 			"estimated_price_cents": model.EstimatedPriceCents,
-			"final_price_cents":    model.FinalPriceCents,
-			"currency":             model.Currency,
-			"scheduled_at":         model.ScheduledAt,
-			"picked_up_at":         model.PickedUpAt,
-			"delivered_at":         model.DeliveredAt,
-			"cancelled_at":         model.CancelledAt,
-			"cancel_note":          model.CancelNote,
-			"notes":                model.Notes,
-			"version":              model.Version,
-			"updated_at":           model.UpdatedAt,
+			"final_price_cents":     model.FinalPriceCents,
+			"currency":              model.Currency,
+			"scheduled_at":          model.ScheduledAt,
+			"arrived_at_pickup":     model.ArrivedAtPickup,
+			"picked_up_at":          model.PickedUpAt,
+			"delivered_at":          model.DeliveredAt,
+			"cancelled_at":          model.CancelledAt,
+			"cancel_note":           model.CancelNote,
+			"notes":                 model.Notes,
+			"version":               model.Version,
+			"updated_at":            model.UpdatedAt,
 		})
 
 	if result.Error != nil {
@@ -225,6 +227,26 @@ func (r *GormBookingRepository) ListAll(ctx context.Context, page, limit int) ([
 	return bookings, total, nil
 }
 
+// FindHistoryByOwnerID retrieves completed/cancelled bookings for an owner.
+func (r *GormBookingRepository) FindHistoryByOwnerID(ctx context.Context, ownerID uuid.UUID, page, limit int) ([]*bookingDomain.Booking, int64, error) {
+	return r.findByUserAndScope(ctx, "owner_id", ownerID, historyStatuses(), nil, page, limit)
+}
+
+// FindHistoryByRunnerID retrieves completed/cancelled bookings for a runner.
+func (r *GormBookingRepository) FindHistoryByRunnerID(ctx context.Context, runnerID uuid.UUID, page, limit int) ([]*bookingDomain.Booking, int64, error) {
+	return r.findByUserAndScope(ctx, "runner_id", runnerID, historyStatuses(), nil, page, limit)
+}
+
+// FindScheduledByOwnerID retrieves future scheduled bookings for an owner.
+func (r *GormBookingRepository) FindScheduledByOwnerID(ctx context.Context, ownerID uuid.UUID, now time.Time, page, limit int) ([]*bookingDomain.Booking, int64, error) {
+	return r.findByUserAndScope(ctx, "owner_id", ownerID, activeStatuses(), &now, page, limit)
+}
+
+// FindScheduledByRunnerID retrieves future scheduled bookings for a runner.
+func (r *GormBookingRepository) FindScheduledByRunnerID(ctx context.Context, runnerID uuid.UUID, now time.Time, page, limit int) ([]*bookingDomain.Booking, int64, error) {
+	return r.findByUserAndScope(ctx, "runner_id", runnerID, activeStatuses(), &now, page, limit)
+}
+
 // CountByStatus returns booking counts grouped by status (admin).
 func (r *GormBookingRepository) CountByStatus(ctx context.Context) (map[string]int64, error) {
 	type statusCount struct {
@@ -247,6 +269,52 @@ func (r *GormBookingRepository) CountByStatus(ctx context.Context) (map[string]i
 }
 
 // --- Conversion Helpers ---
+
+func (r *GormBookingRepository) findByUserAndScope(ctx context.Context, userColumn string, userID uuid.UUID, statuses []string, scheduledAfter *time.Time, page, limit int) ([]*bookingDomain.Booking, int64, error) {
+	query := r.db.WithContext(ctx).Model(&BookingModel{}).
+		Where(userColumn+" = ?", userID).
+		Where("status IN ?", statuses)
+	if scheduledAfter != nil {
+		query = query.Where("scheduled_at > ?", *scheduledAfter)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count bookings: %w", err)
+	}
+
+	var models []BookingModel
+	offset := (page - 1) * limit
+	if err := query.Order("scheduled_at ASC, created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&models).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to find bookings: %w", err)
+	}
+
+	bookings := make([]*bookingDomain.Booking, len(models))
+	for i, m := range models {
+		bk, err := toDomainBooking(&m)
+		if err != nil {
+			return nil, 0, err
+		}
+		bookings[i] = bk
+	}
+	return bookings, total, nil
+}
+
+func historyStatuses() []string {
+	return []string{string(bookingDomain.StatusCompleted), string(bookingDomain.StatusCancelled)}
+}
+
+func activeStatuses() []string {
+	return []string{
+		string(bookingDomain.StatusRequested),
+		string(bookingDomain.StatusAccepted),
+		string(bookingDomain.StatusPickupArrived),
+		string(bookingDomain.StatusInProgress),
+	}
+}
 
 func toBookingModel(bk *bookingDomain.Booking) (*BookingModel, error) {
 	petSpecJSON, err := json.Marshal(bk.PetSpec())
@@ -293,6 +361,7 @@ func toBookingModel(bk *bookingDomain.Booking) (*BookingModel, error) {
 		FinalPriceCents:     bk.FinalPriceCents(),
 		Currency:            bk.Currency(),
 		ScheduledAt:         bk.ScheduledAt(),
+		ArrivedAtPickup:     bk.ArrivedAtPickup(),
 		PickedUpAt:          bk.PickedUpAt(),
 		DeliveredAt:         bk.DeliveredAt(),
 		CancelledAt:         bk.CancelledAt(),
@@ -354,6 +423,7 @@ func toDomainBooking(m *BookingModel) (*bookingDomain.Booking, error) {
 		m.FinalPriceCents,
 		m.Currency,
 		m.ScheduledAt,
+		m.ArrivedAtPickup,
 		m.PickedUpAt,
 		m.DeliveredAt,
 		m.CancelledAt,

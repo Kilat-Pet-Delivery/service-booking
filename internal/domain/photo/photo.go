@@ -11,13 +11,15 @@ import (
 type PhotoType string
 
 const (
-	PhotoTypePickup   PhotoType = "pickup"
-	PhotoTypeDelivery PhotoType = "delivery"
+	PhotoTypePickup    PhotoType = "pickup"
+	PhotoTypeDelivery  PhotoType = "delivery"
+	PhotoTypeProof     PhotoType = "proof"
+	PhotoTypeSignature PhotoType = "signature"
 )
 
 // IsValid returns true if the photo type is recognized.
 func (p PhotoType) IsValid() bool {
-	return p == PhotoTypePickup || p == PhotoTypeDelivery
+	return p == PhotoTypePickup || p == PhotoTypeDelivery || p == PhotoTypeProof || p == PhotoTypeSignature
 }
 
 // BookingPhoto is the aggregate root for booking proof photos.
@@ -70,10 +72,10 @@ func Reconstruct(id, bookingID, runnerID uuid.UUID, photoType PhotoType, photoUR
 
 // Getters.
 func (p *BookingPhoto) ID() uuid.UUID        { return p.id }
-func (p *BookingPhoto) BookingID() uuid.UUID  { return p.bookingID }
-func (p *BookingPhoto) RunnerID() uuid.UUID   { return p.runnerID }
-func (p *BookingPhoto) PhotoType() PhotoType  { return p.photoType }
-func (p *BookingPhoto) PhotoURL() string      { return p.photoURL }
-func (p *BookingPhoto) Caption() string       { return p.caption }
-func (p *BookingPhoto) TakenAt() time.Time    { return p.takenAt }
-func (p *BookingPhoto) CreatedAt() time.Time  { return p.createdAt }
+func (p *BookingPhoto) BookingID() uuid.UUID { return p.bookingID }
+func (p *BookingPhoto) RunnerID() uuid.UUID  { return p.runnerID }
+func (p *BookingPhoto) PhotoType() PhotoType { return p.photoType }
+func (p *BookingPhoto) PhotoURL() string     { return p.photoURL }
+func (p *BookingPhoto) Caption() string      { return p.caption }
+func (p *BookingPhoto) TakenAt() time.Time   { return p.takenAt }
+func (p *BookingPhoto) CreatedAt() time.Time { return p.createdAt }

@@ -11,50 +11,108 @@ import (
 	"github.com/Kilat-Pet-Delivery/lib-proto/dto"
 	"github.com/Kilat-Pet-Delivery/lib-proto/events"
 	bookingDomain "github.com/Kilat-Pet-Delivery/service-booking/internal/domain/booking"
+	photoDomain "github.com/Kilat-Pet-Delivery/service-booking/internal/domain/photo"
 	"github.com/Kilat-Pet-Delivery/service-booking/internal/repository"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
+const authRoleRunner = "runner"
+
+const (
+	BookingArrivedAtPickup = "booking.arrived_at_pickup"
+	BookingProofSubmitted  = "booking.proof_submitted"
+	BookingCancelledActive = "booking.cancelled_active"
+)
+
 // CreateBookingRequest holds the data needed to create a new booking.
 type CreateBookingRequest struct {
-	PetSpec        dto.PetSpecDTO  `json:"pet_spec" binding:"required"`
-	PickupAddress  dto.AddressDTO  `json:"pickup_address" binding:"required"`
-	DropoffAddress dto.AddressDTO  `json:"dropoff_address" binding:"required"`
-	ScheduledAt    *time.Time      `json:"scheduled_at"`
-	Notes          string          `json:"notes"`
+	PetSpec        dto.PetSpecDTO `json:"pet_spec" binding:"required"`
+	PickupAddress  dto.AddressDTO `json:"pickup_address" binding:"required"`
+	DropoffAddress dto.AddressDTO `json:"dropoff_address" binding:"required"`
+	ScheduledAt    *time.Time     `json:"scheduled_at"`
+	Notes          string         `json:"notes"`
 }
 
 // BookingDTO is the response representation of a booking.
 type BookingDTO struct {
-	ID                  uuid.UUID              `json:"id"`
-	BookingNumber       string                 `json:"booking_number"`
-	OwnerID             uuid.UUID              `json:"owner_id"`
-	RunnerID            *uuid.UUID             `json:"runner_id,omitempty"`
-	Status              string                 `json:"status"`
-	PetSpec             bookingDomain.PetSpecification  `json:"pet_spec"`
-	CrateReq            bookingDomain.CrateRequirement  `json:"crate_requirement"`
-	PickupAddress       dto.AddressDTO         `json:"pickup_address"`
-	DropoffAddress      dto.AddressDTO         `json:"dropoff_address"`
+	ID                  uuid.UUID                         `json:"id"`
+	BookingNumber       string                            `json:"booking_number"`
+	OwnerID             uuid.UUID                         `json:"owner_id"`
+	RunnerID            *uuid.UUID                        `json:"runner_id,omitempty"`
+	Status              string                            `json:"status"`
+	PetSpec             bookingDomain.PetSpecification    `json:"pet_spec"`
+	CrateReq            bookingDomain.CrateRequirement    `json:"crate_requirement"`
+	PickupAddress       dto.AddressDTO                    `json:"pickup_address"`
+	DropoffAddress      dto.AddressDTO                    `json:"dropoff_address"`
 	RouteSpec           *bookingDomain.RouteSpecification `json:"route_spec,omitempty"`
-	EstimatedPriceCents int64                  `json:"estimated_price_cents"`
-	FinalPriceCents     *int64                 `json:"final_price_cents,omitempty"`
-	Currency            string                 `json:"currency"`
-	ScheduledAt         *time.Time             `json:"scheduled_at,omitempty"`
-	PickedUpAt          *time.Time             `json:"picked_up_at,omitempty"`
-	DeliveredAt         *time.Time             `json:"delivered_at,omitempty"`
-	CancelledAt         *time.Time             `json:"cancelled_at,omitempty"`
-	CancelNote          string                 `json:"cancel_note,omitempty"`
-	Notes               string                 `json:"notes,omitempty"`
-	Version             int64                  `json:"version"`
-	CreatedAt           time.Time              `json:"created_at"`
-	UpdatedAt           time.Time              `json:"updated_at"`
+	EstimatedPriceCents int64                             `json:"estimated_price_cents"`
+	FinalPriceCents     *int64                            `json:"final_price_cents,omitempty"`
+	Currency            string                            `json:"currency"`
+	ScheduledAt         *time.Time                        `json:"scheduled_at,omitempty"`
+	ArrivedAtPickup     *time.Time                        `json:"arrived_at_pickup,omitempty"`
+	PickedUpAt          *time.Time                        `json:"picked_up_at,omitempty"`
+	DeliveredAt         *time.Time                        `json:"delivered_at,omitempty"`
+	CancelledAt         *time.Time                        `json:"cancelled_at,omitempty"`
+	CancelNote          string                            `json:"cancel_note,omitempty"`
+	Notes               string                            `json:"notes,omitempty"`
+	Version             int64                             `json:"version"`
+	CreatedAt           time.Time                         `json:"created_at"`
+	UpdatedAt           time.Time                         `json:"updated_at"`
+}
+
+// ProofOfDeliveryRequest holds final delivery handoff evidence.
+type ProofOfDeliveryRequest struct {
+	PhotoURL      string `json:"photo_url" form:"photo_url" binding:"required"`
+	SignatureURL  string `json:"signature_url" form:"signature_url" binding:"required"`
+	RecipientKind string `json:"recipient_kind" form:"recipient_kind" binding:"required"`
+	Notes         string `json:"notes" form:"notes"`
+}
+
+// ProofOfDeliveryDTO is the API response for delivery proof evidence.
+type ProofOfDeliveryDTO struct {
+	ID            uuid.UUID `json:"id"`
+	BookingID     uuid.UUID `json:"booking_id"`
+	PhotoURL      string    `json:"photo_url"`
+	SignatureURL  string    `json:"signature_url"`
+	RecipientKind string    `json:"recipient_kind"`
+	Notes         string    `json:"notes,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type BookingArrivedAtPickupEvent struct {
+	BookingID       uuid.UUID `json:"booking_id"`
+	BookingNumber   string    `json:"booking_number"`
+	RunnerID        uuid.UUID `json:"runner_id"`
+	OwnerID         uuid.UUID `json:"owner_id"`
+	ArrivedAtPickup time.Time `json:"arrived_at_pickup"`
+	OccurredAt      time.Time `json:"occurred_at"`
+}
+
+type BookingProofSubmittedEvent struct {
+	BookingID     uuid.UUID `json:"booking_id"`
+	BookingNumber string    `json:"booking_number"`
+	RunnerID      uuid.UUID `json:"runner_id"`
+	OwnerID       uuid.UUID `json:"owner_id"`
+	ProofID       uuid.UUID `json:"proof_id"`
+	RecipientKind string    `json:"recipient_kind"`
+	OccurredAt    time.Time `json:"occurred_at"`
+}
+
+type BookingCancelledActiveEvent struct {
+	BookingID     uuid.UUID `json:"booking_id"`
+	BookingNumber string    `json:"booking_number"`
+	CancelledBy   uuid.UUID `json:"cancelled_by"`
+	Reason        string    `json:"reason"`
+	OccurredAt    time.Time `json:"occurred_at"`
 }
 
 // BookingService is the application service orchestrating booking use cases.
 type BookingService struct {
 	repo        bookingDomain.BookingRepository
+	proofRepo   bookingDomain.ProofOfDeliveryRepository
+	photoRepo   photoDomain.PhotoRepository
 	declineRepo *repository.GormDeclineReasonRepository
 	db          *gorm.DB
 	pricing     bookingDomain.PricingStrategy
@@ -71,8 +129,16 @@ func NewBookingService(
 	db *gorm.DB,
 	declineRepo *repository.GormDeclineReasonRepository,
 ) *BookingService {
+	var proofRepo bookingDomain.ProofOfDeliveryRepository
+	var photoRepo photoDomain.PhotoRepository
+	if db != nil {
+		proofRepo = repository.NewGormProofOfDeliveryRepository(db)
+		photoRepo = repository.NewGormPhotoRepository(db)
+	}
 	return &BookingService{
 		repo:        repo,
+		proofRepo:   proofRepo,
+		photoRepo:   photoRepo,
 		pricing:     pricing,
 		producer:    producer,
 		logger:      logger,
@@ -164,6 +230,36 @@ func (s *BookingService) AcceptBooking(ctx context.Context, bookingID, runnerID 
 	return &result, nil
 }
 
+// ArriveAtPickup records runner arrival at the pickup location.
+func (s *BookingService) ArriveAtPickup(ctx context.Context, bookingID uuid.UUID) (*BookingDTO, error) {
+	bk, err := s.repo.FindByID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := bk.ArriveAtPickup(); err != nil {
+		return nil, err
+	}
+
+	bk.IncrementVersion()
+	if err := s.repo.Update(ctx, bk); err != nil {
+		return nil, err
+	}
+
+	evt := BookingArrivedAtPickupEvent{
+		BookingID:       bk.ID(),
+		BookingNumber:   bk.BookingNumber(),
+		RunnerID:        derefUUID(bk.RunnerID()),
+		OwnerID:         bk.OwnerID(),
+		ArrivedAtPickup: *bk.ArrivedAtPickup(),
+		OccurredAt:      time.Now().UTC(),
+	}
+	s.publishEvent(ctx, events.TopicBookingEvents, BookingArrivedAtPickup, bk.ID().String(), evt)
+
+	result := toBookingDTO(bk)
+	return &result, nil
+}
+
 // StartDelivery marks the pet as picked up and delivery in progress.
 func (s *BookingService) StartDelivery(ctx context.Context, bookingID uuid.UUID) (*BookingDTO, error) {
 	bk, err := s.repo.FindByID(ctx, bookingID)
@@ -192,6 +288,58 @@ func (s *BookingService) StartDelivery(ctx context.Context, bookingID uuid.UUID)
 	s.publishEvent(ctx, events.TopicBookingEvents, events.BookingPetPickedUp, bk.ID().String(), evt)
 
 	result := toBookingDTO(bk)
+	return &result, nil
+}
+
+// SubmitProofOfDelivery persists delivery proof and publishes a proof-submitted event.
+func (s *BookingService) SubmitProofOfDelivery(ctx context.Context, bookingID, runnerID uuid.UUID, req ProofOfDeliveryRequest) (*ProofOfDeliveryDTO, error) {
+	bk, err := s.repo.FindByID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	if bk.Status() != bookingDomain.StatusDelivered {
+		return nil, domain.NewInvalidStateError(string(bk.Status()), "proof_of_delivery")
+	}
+	if s.proofRepo == nil {
+		return nil, domain.NewValidationError("proof repository is not configured")
+	}
+
+	proof, err := bookingDomain.NewProofOfDelivery(bookingID, req.PhotoURL, req.SignatureURL, req.RecipientKind, req.Notes)
+	if err != nil {
+		return nil, domain.NewValidationError(err.Error())
+	}
+	if err := s.proofRepo.Save(ctx, proof); err != nil {
+		return nil, err
+	}
+	if s.photoRepo != nil {
+		photo, err := photoDomain.NewBookingPhoto(bookingID, runnerID, photoDomain.PhotoTypeProof, req.PhotoURL, "proof of delivery")
+		if err != nil {
+			return nil, err
+		}
+		if err := s.photoRepo.Save(ctx, photo); err != nil {
+			return nil, err
+		}
+		signature, err := photoDomain.NewBookingPhoto(bookingID, runnerID, photoDomain.PhotoTypeSignature, req.SignatureURL, "recipient signature")
+		if err != nil {
+			return nil, err
+		}
+		if err := s.photoRepo.Save(ctx, signature); err != nil {
+			return nil, err
+		}
+	}
+
+	evt := BookingProofSubmittedEvent{
+		BookingID:     bk.ID(),
+		BookingNumber: bk.BookingNumber(),
+		RunnerID:      runnerID,
+		OwnerID:       bk.OwnerID(),
+		ProofID:       proof.ID(),
+		RecipientKind: proof.RecipientKind(),
+		OccurredAt:    time.Now().UTC(),
+	}
+	s.publishEvent(ctx, events.TopicBookingEvents, BookingProofSubmitted, bk.ID().String(), evt)
+
+	result := toProofDTO(proof)
 	return &result, nil
 }
 
@@ -232,6 +380,10 @@ func (s *BookingService) CompleteBooking(ctx context.Context, bookingID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
+	if bk.Status() == bookingDomain.StatusCompleted {
+		result := toBookingDTO(bk)
+		return &result, nil
+	}
 
 	// Use estimated price as final price if not set differently
 	finalPrice := bk.EstimatedPriceCents()
@@ -265,6 +417,11 @@ func (s *BookingService) CompleteBooking(ctx context.Context, bookingID uuid.UUI
 	return &result, nil
 }
 
+// CompleteDelivery is the public delivery-complete use case. It is idempotent.
+func (s *BookingService) CompleteDelivery(ctx context.Context, bookingID uuid.UUID) (*BookingDTO, error) {
+	return s.CompleteBooking(ctx, bookingID)
+}
+
 // CancelBooking cancels a booking that is not yet in a terminal state.
 func (s *BookingService) CancelBooking(ctx context.Context, bookingID, cancelledBy uuid.UUID, reason string) (*BookingDTO, error) {
 	bk, err := s.repo.FindByID(ctx, bookingID)
@@ -290,6 +447,40 @@ func (s *BookingService) CancelBooking(ctx context.Context, bookingID, cancelled
 		OccurredAt:    time.Now().UTC(),
 	}
 	s.publishEvent(ctx, events.TopicBookingEvents, events.BookingCancelled, bk.ID().String(), evt)
+
+	result := toBookingDTO(bk)
+	return &result, nil
+}
+
+// CancelActiveDelivery cancels an active delivery and emits an event for service-incident.
+func (s *BookingService) CancelActiveDelivery(ctx context.Context, bookingID, cancelledBy uuid.UUID, reason string) (*BookingDTO, error) {
+	bk, err := s.repo.FindByID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	if bk.Status() != bookingDomain.StatusPickupArrived && bk.Status() != bookingDomain.StatusInProgress {
+		return nil, domain.NewInvalidStateError(string(bk.Status()), string(bookingDomain.StatusCancelled))
+	}
+	if reason == "" {
+		return nil, domain.NewValidationError("reason is required")
+	}
+
+	if err := bk.Cancel(reason); err != nil {
+		return nil, err
+	}
+	bk.IncrementVersion()
+	if err := s.repo.Update(ctx, bk); err != nil {
+		return nil, err
+	}
+
+	evt := BookingCancelledActiveEvent{
+		BookingID:     bk.ID(),
+		BookingNumber: bk.BookingNumber(),
+		CancelledBy:   cancelledBy,
+		Reason:        reason,
+		OccurredAt:    time.Now().UTC(),
+	}
+	s.publishEvent(ctx, events.TopicBookingEvents, BookingCancelledActive, bk.ID().String(), evt)
 
 	result := toBookingDTO(bk)
 	return &result, nil
@@ -335,6 +526,45 @@ func (s *BookingService) GetRunnerBookings(ctx context.Context, runnerID uuid.UU
 
 	result := domain.NewPaginatedResult(dtos, total, page, limit)
 	return &result, nil
+}
+
+// GetJobHistory retrieves completed and cancelled bookings for the caller's role.
+func (s *BookingService) GetJobHistory(ctx context.Context, userID uuid.UUID, role string, page, limit int) (*domain.PaginatedResult[BookingDTO], error) {
+	var (
+		bookings []*bookingDomain.Booking
+		total    int64
+		err      error
+	)
+	switch role {
+	case string(authRoleRunner):
+		bookings, total, err = s.repo.FindHistoryByRunnerID(ctx, userID, page, limit)
+	default:
+		bookings, total, err = s.repo.FindHistoryByOwnerID(ctx, userID, page, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return paginatedBookings(bookings, total, page, limit), nil
+}
+
+// GetScheduledBookings retrieves future scheduled bookings for the caller's role.
+func (s *BookingService) GetScheduledBookings(ctx context.Context, userID uuid.UUID, role string, page, limit int) (*domain.PaginatedResult[BookingDTO], error) {
+	now := time.Now().UTC()
+	var (
+		bookings []*bookingDomain.Booking
+		total    int64
+		err      error
+	)
+	switch role {
+	case string(authRoleRunner):
+		bookings, total, err = s.repo.FindScheduledByRunnerID(ctx, userID, now, page, limit)
+	default:
+		bookings, total, err = s.repo.FindScheduledByOwnerID(ctx, userID, now, page, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return paginatedBookings(bookings, total, page, limit), nil
 }
 
 // RebookBooking clones an existing booking's data into a new booking.
@@ -490,6 +720,7 @@ func toBookingDTO(bk *bookingDomain.Booking) BookingDTO {
 		FinalPriceCents:     bk.FinalPriceCents(),
 		Currency:            bk.Currency(),
 		ScheduledAt:         bk.ScheduledAt(),
+		ArrivedAtPickup:     bk.ArrivedAtPickup(),
 		PickedUpAt:          bk.PickedUpAt(),
 		DeliveredAt:         bk.DeliveredAt(),
 		CancelledAt:         bk.CancelledAt(),
@@ -499,6 +730,34 @@ func toBookingDTO(bk *bookingDomain.Booking) BookingDTO {
 		CreatedAt:           bk.CreatedAt(),
 		UpdatedAt:           bk.UpdatedAt(),
 	}
+}
+
+func toProofDTO(proof *bookingDomain.ProofOfDelivery) ProofOfDeliveryDTO {
+	return ProofOfDeliveryDTO{
+		ID:            proof.ID(),
+		BookingID:     proof.BookingID(),
+		PhotoURL:      proof.PhotoURL(),
+		SignatureURL:  proof.SignatureURL(),
+		RecipientKind: proof.RecipientKind(),
+		Notes:         proof.Notes(),
+		CreatedAt:     proof.CreatedAt(),
+	}
+}
+
+func paginatedBookings(bookings []*bookingDomain.Booking, total int64, page, limit int) *domain.PaginatedResult[BookingDTO] {
+	dtos := make([]BookingDTO, len(bookings))
+	for i, bk := range bookings {
+		dtos[i] = toBookingDTO(bk)
+	}
+	result := domain.NewPaginatedResult(dtos, total, page, limit)
+	return &result
+}
+
+func derefUUID(value *uuid.UUID) uuid.UUID {
+	if value == nil {
+		return uuid.Nil
+	}
+	return *value
 }
 
 func buildPetSpecification(petDTO dto.PetSpecDTO) bookingDomain.PetSpecification {
@@ -544,6 +803,9 @@ func (s *BookingService) publishBookingRequested(ctx context.Context, bk *bookin
 }
 
 func (s *BookingService) publishEvent(ctx context.Context, topic, eventType, key string, data interface{}) {
+	if s.producer == nil {
+		return
+	}
 	cloudEvent, err := kafka.NewCloudEvent("service-booking", eventType, data)
 	if err != nil {
 		s.logger.Error("failed to create cloud event",

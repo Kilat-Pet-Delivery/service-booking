@@ -13,30 +13,36 @@ import (
 
 // CreatePetRequest is the request DTO for creating a pet profile.
 type CreatePetRequest struct {
-	Name              string  `json:"name" binding:"required"`
-	PetType           string  `json:"pet_type" binding:"required"`
-	Breed             string  `json:"breed"`
-	WeightKg          float64 `json:"weight_kg"`
-	AgeMonths         int     `json:"age_months"`
-	Allergies         string  `json:"allergies"`
-	SpecialNeeds      string  `json:"special_needs"`
-	Notes             string  `json:"notes"`
-	PhotoURL          string  `json:"photo_url"`
-	VaccinationStatus string  `json:"vaccination_status"`
+	Name              string   `json:"name" binding:"required"`
+	PetType           string   `json:"pet_type" binding:"required"`
+	Breed             string   `json:"breed"`
+	WeightKg          float64  `json:"weight_kg"`
+	AgeMonths         int      `json:"age_months"`
+	Temperament       []string `json:"temperament"`
+	Allergies         string   `json:"allergies"`
+	VetContactName    string   `json:"vet_contact_name"`
+	VetContactPhone   string   `json:"vet_contact_phone"`
+	SpecialNeeds      string   `json:"special_needs"`
+	Notes             string   `json:"notes"`
+	PhotoURL          string   `json:"photo_url"`
+	VaccinationStatus string   `json:"vaccination_status"`
 }
 
 // UpdatePetRequest is the request DTO for updating a pet profile.
 type UpdatePetRequest struct {
-	Name              string  `json:"name"`
-	PetType           string  `json:"pet_type"`
-	Breed             string  `json:"breed"`
-	WeightKg          float64 `json:"weight_kg"`
-	AgeMonths         int     `json:"age_months"`
-	Allergies         string  `json:"allergies"`
-	SpecialNeeds      string  `json:"special_needs"`
-	Notes             string  `json:"notes"`
-	PhotoURL          string  `json:"photo_url"`
-	VaccinationStatus string  `json:"vaccination_status"`
+	Name              string   `json:"name"`
+	PetType           string   `json:"pet_type"`
+	Breed             string   `json:"breed"`
+	WeightKg          float64  `json:"weight_kg"`
+	AgeMonths         int      `json:"age_months"`
+	Temperament       []string `json:"temperament"`
+	Allergies         string   `json:"allergies"`
+	VetContactName    string   `json:"vet_contact_name"`
+	VetContactPhone   string   `json:"vet_contact_phone"`
+	SpecialNeeds      string   `json:"special_needs"`
+	Notes             string   `json:"notes"`
+	PhotoURL          string   `json:"photo_url"`
+	VaccinationStatus string   `json:"vaccination_status"`
 }
 
 // PetDTO is the API response representation of a pet profile.
@@ -48,7 +54,10 @@ type PetDTO struct {
 	Breed             string    `json:"breed"`
 	WeightKg          float64   `json:"weight_kg"`
 	AgeMonths         int       `json:"age_months"`
+	Temperament       []string  `json:"temperament,omitempty"`
 	Allergies         string    `json:"allergies,omitempty"`
+	VetContactName    string    `json:"vet_contact_name,omitempty"`
+	VetContactPhone   string    `json:"vet_contact_phone,omitempty"`
 	SpecialNeeds      string    `json:"special_needs,omitempty"`
 	Notes             string    `json:"notes,omitempty"`
 	PhotoURL          string    `json:"photo_url,omitempty"`
@@ -75,7 +84,8 @@ func (s *PetService) CreatePet(ctx context.Context, ownerID uuid.UUID, req Creat
 		ownerID,
 		req.Name, req.PetType, req.Breed,
 		req.WeightKg, req.AgeMonths,
-		req.Allergies, req.SpecialNeeds, req.Notes,
+		req.Temperament,
+		req.Allergies, req.VetContactName, req.VetContactPhone, req.SpecialNeeds, req.Notes,
 		req.PhotoURL, req.VaccinationStatus,
 	)
 	if err != nil {
@@ -134,7 +144,8 @@ func (s *PetService) UpdatePet(ctx context.Context, ownerID, petID uuid.UUID, re
 	pet.Update(
 		req.Name, req.PetType, req.Breed,
 		req.WeightKg, req.AgeMonths,
-		req.Allergies, req.SpecialNeeds, req.Notes,
+		req.Temperament,
+		req.Allergies, req.VetContactName, req.VetContactPhone, req.SpecialNeeds, req.Notes,
 		req.PhotoURL, req.VaccinationStatus,
 	)
 
@@ -177,7 +188,10 @@ func toPetDTO(p *petDomain.Pet) PetDTO {
 		Breed:             p.Breed(),
 		WeightKg:          p.WeightKg(),
 		AgeMonths:         p.AgeMonths(),
+		Temperament:       p.Temperament(),
 		Allergies:         p.Allergies(),
+		VetContactName:    p.VetContactName(),
+		VetContactPhone:   p.VetContactPhone(),
 		SpecialNeeds:      p.SpecialNeeds(),
 		Notes:             p.Notes(),
 		PhotoURL:          p.PhotoURL(),

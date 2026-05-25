@@ -30,12 +30,13 @@ type Booking struct {
 	finalPriceCents     *int64
 	currency            string
 
-	scheduledAt *time.Time
-	pickedUpAt  *time.Time
-	deliveredAt *time.Time
-	cancelledAt *time.Time
-	cancelNote  string
-	notes       string
+	scheduledAt     *time.Time
+	arrivedAtPickup *time.Time
+	pickedUpAt      *time.Time
+	deliveredAt     *time.Time
+	cancelledAt     *time.Time
+	cancelNote      string
+	notes           string
 
 	version   int64
 	createdAt time.Time
@@ -130,6 +131,7 @@ func ReconstructBooking(
 	finalPriceCents *int64,
 	currency string,
 	scheduledAt *time.Time,
+	arrivedAtPickup *time.Time,
 	pickedUpAt *time.Time,
 	deliveredAt *time.Time,
 	cancelledAt *time.Time,
@@ -154,6 +156,7 @@ func ReconstructBooking(
 		finalPriceCents:     finalPriceCents,
 		currency:            currency,
 		scheduledAt:         scheduledAt,
+		arrivedAtPickup:     arrivedAtPickup,
 		pickedUpAt:          pickedUpAt,
 		deliveredAt:         deliveredAt,
 		cancelledAt:         cancelledAt,
@@ -209,6 +212,9 @@ func (b *Booking) Currency() string { return b.currency }
 // ScheduledAt returns the scheduled time, or nil if immediate.
 func (b *Booking) ScheduledAt() *time.Time { return b.scheduledAt }
 
+// ArrivedAtPickup returns the time the runner arrived at pickup.
+func (b *Booking) ArrivedAtPickup() *time.Time { return b.arrivedAtPickup }
+
 // PickedUpAt returns the time the pet was picked up.
 func (b *Booking) PickedUpAt() *time.Time { return b.pickedUpAt }
 
@@ -246,6 +252,18 @@ func (b *Booking) Accept(runnerID uuid.UUID) error {
 	b.runnerID = &runnerID
 	b.status = StatusAccepted
 	b.updatedAt = time.Now().UTC()
+	return nil
+}
+
+// ArriveAtPickup records that the runner reached the pickup point.
+func (b *Booking) ArriveAtPickup() error {
+	if !b.status.CanTransitionTo(StatusPickupArrived) {
+		return domain.NewInvalidStateError(string(b.status), string(StatusPickupArrived))
+	}
+	now := time.Now().UTC()
+	b.status = StatusPickupArrived
+	b.arrivedAtPickup = &now
+	b.updatedAt = now
 	return nil
 }
 

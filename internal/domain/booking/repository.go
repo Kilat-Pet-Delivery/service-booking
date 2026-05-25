@@ -2,6 +2,7 @@ package booking
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -20,6 +21,18 @@ type BookingRepository interface {
 	// FindByRunnerID retrieves bookings assigned to a specific runner with pagination.
 	FindByRunnerID(ctx context.Context, runnerID uuid.UUID, page, limit int) ([]*Booking, int64, error)
 
+	// FindHistoryByOwnerID retrieves completed/cancelled bookings for an owner.
+	FindHistoryByOwnerID(ctx context.Context, ownerID uuid.UUID, page, limit int) ([]*Booking, int64, error)
+
+	// FindHistoryByRunnerID retrieves completed/cancelled bookings for a runner.
+	FindHistoryByRunnerID(ctx context.Context, runnerID uuid.UUID, page, limit int) ([]*Booking, int64, error)
+
+	// FindScheduledByOwnerID retrieves future scheduled bookings for an owner.
+	FindScheduledByOwnerID(ctx context.Context, ownerID uuid.UUID, now time.Time, page, limit int) ([]*Booking, int64, error)
+
+	// FindScheduledByRunnerID retrieves future scheduled bookings for a runner.
+	FindScheduledByRunnerID(ctx context.Context, runnerID uuid.UUID, now time.Time, page, limit int) ([]*Booking, int64, error)
+
 	// ListAll retrieves all bookings with pagination (admin).
 	ListAll(ctx context.Context, page, limit int) ([]*Booking, int64, error)
 
@@ -31,4 +44,10 @@ type BookingRepository interface {
 
 	// Update persists changes to an existing booking with optimistic locking.
 	Update(ctx context.Context, booking *Booking) error
+}
+
+// ProofOfDeliveryRepository defines persistence for delivery proofs.
+type ProofOfDeliveryRepository interface {
+	Save(ctx context.Context, proof *ProofOfDelivery) error
+	FindByBookingID(ctx context.Context, bookingID uuid.UUID) (*ProofOfDelivery, error)
 }
