@@ -36,8 +36,8 @@ type testInfra struct {
 
 // bookingStack holds wired-up booking service components.
 type bookingStack struct {
-	Service        *application.BookingService
-	Consumer       *bookingEvents.PaymentEventConsumer
+	Service         *application.BookingService
+	Consumer        *bookingEvents.PaymentEventConsumer
 	CleanupProducer func()
 }
 
@@ -89,7 +89,11 @@ func setupContainers(t *testing.T) *testInfra {
 
 	// Enable uuid-ossp and auto-migrate.
 	require.NoError(t, db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`).Error)
-	require.NoError(t, db.AutoMigrate(&repository.BookingModel{}))
+	require.NoError(t, db.AutoMigrate(
+		&repository.BookingModel{},
+		&repository.BookingItemModel{},
+		&repository.IdempotencyKeyModel{},
+	))
 
 	// Start Kafka container using confluent-local (supports KRaft natively).
 	kafkaContainer, err := kafkamodule.Run(ctx, "confluentinc/confluent-local:7.5.0")
