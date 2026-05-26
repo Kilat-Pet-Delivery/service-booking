@@ -19,6 +19,7 @@ type Booking struct {
 	bookingNumber  string
 	ownerID        uuid.UUID
 	runnerID       *uuid.UUID
+	shopID         *uuid.UUID
 	status         BookingStatus
 	petSpec        PetSpecification
 	crateReq       CrateRequirement
@@ -30,12 +31,13 @@ type Booking struct {
 	finalPriceCents     *int64
 	currency            string
 
-	scheduledAt *time.Time
-	pickedUpAt  *time.Time
-	deliveredAt *time.Time
-	cancelledAt *time.Time
-	cancelNote  string
-	notes       string
+	scheduledAt   *time.Time
+	pickedUpAt    *time.Time
+	deliveredAt   *time.Time
+	cancelledAt   *time.Time
+	cancelNote    string
+	notes         string
+	qrPickupToken *string
 
 	version   int64
 	createdAt time.Time
@@ -66,6 +68,7 @@ func NewBooking(
 	currency string,
 	scheduledAt *time.Time,
 	notes string,
+	shopID *uuid.UUID,
 ) (*Booking, error) {
 	if ownerID == uuid.Nil {
 		return nil, domain.NewValidationError("owner ID is required")
@@ -99,6 +102,7 @@ func NewBooking(
 		id:                  uuid.New(),
 		bookingNumber:       bookingNumber,
 		ownerID:             ownerID,
+		shopID:              shopID,
 		status:              StatusRequested,
 		petSpec:             petSpec,
 		crateReq:            crateReq,
@@ -120,6 +124,7 @@ func ReconstructBooking(
 	bookingNumber string,
 	ownerID uuid.UUID,
 	runnerID *uuid.UUID,
+	shopID *uuid.UUID,
 	status BookingStatus,
 	petSpec PetSpecification,
 	crateReq CrateRequirement,
@@ -135,6 +140,7 @@ func ReconstructBooking(
 	cancelledAt *time.Time,
 	cancelNote string,
 	notes string,
+	qrPickupToken *string,
 	version int64,
 	createdAt time.Time,
 	updatedAt time.Time,
@@ -144,6 +150,7 @@ func ReconstructBooking(
 		bookingNumber:       bookingNumber,
 		ownerID:             ownerID,
 		runnerID:            runnerID,
+		shopID:              shopID,
 		status:              status,
 		petSpec:             petSpec,
 		crateReq:            crateReq,
@@ -159,6 +166,7 @@ func ReconstructBooking(
 		cancelledAt:         cancelledAt,
 		cancelNote:          cancelNote,
 		notes:               notes,
+		qrPickupToken:       qrPickupToken,
 		version:             version,
 		createdAt:           createdAt,
 		updatedAt:           updatedAt,
@@ -178,6 +186,9 @@ func (b *Booking) OwnerID() uuid.UUID { return b.ownerID }
 
 // RunnerID returns the assigned runner's user ID, or nil if unassigned.
 func (b *Booking) RunnerID() *uuid.UUID { return b.runnerID }
+
+// ShopID returns the fulfilling shop ID for shop orders, or nil for runner-only bookings.
+func (b *Booking) ShopID() *uuid.UUID { return b.shopID }
 
 // Status returns the current booking status.
 func (b *Booking) Status() BookingStatus { return b.status }
@@ -224,6 +235,9 @@ func (b *Booking) CancelNote() string { return b.cancelNote }
 // Notes returns any additional notes for the booking.
 func (b *Booking) Notes() string { return b.notes }
 
+// QRPickupToken returns the current pickup token, or nil when not ready.
+func (b *Booking) QRPickupToken() *string { return b.qrPickupToken }
+
 // Version returns the entity version for optimistic locking.
 func (b *Booking) Version() int64 { return b.version }
 
@@ -237,6 +251,9 @@ func (b *Booking) UpdatedAt() time.Time { return b.updatedAt }
 
 // Accept transitions the booking from requested to accepted with the given runner.
 func (b *Booking) Accept(runnerID uuid.UUID) error {
+	if b.shopID != nil && b.status != StatusReadyForPickup {
+		return domain.NewInvalidStateError(string(b.status), string(StatusAccepted))
+	}
 	if !b.status.CanTransitionTo(StatusAccepted) {
 		return domain.NewInvalidStateError(string(b.status), string(StatusAccepted))
 	}
@@ -249,8 +266,73 @@ func (b *Booking) Accept(runnerID uuid.UUID) error {
 	return nil
 }
 
+// AcceptByShop transitions a shop order from requested to accepted_by_shop.
+func (b *Booking) AcceptByShop(shopID uuid.UUID) error {
+	if b.shopID == nil || *b.shopID != shopID {
+		return domain.NewConflictError("booking does not belong to this shop")
+	}
+	if !b.status.CanTransitionTo(StatusAcceptedByShop) {
+		return domain.NewInvalidStateError(string(b.status), string(StatusAcceptedByShop))
+	}
+	b.status = StatusAcceptedByShop
+	b.updatedAt = time.Now().UTC()
+	return nil
+}
+
+// MarkPreparing transitions a shop order into preparing.
+func (b *Booking) MarkPreparing(shopID uuid.UUID) error {
+	if b.shopID == nil || *b.shopID != shopID {
+		return domain.NewConflictError("booking does not belong to this shop")
+	}
+	if !b.status.CanTransitionTo(StatusPreparing) {
+		return domain.NewInvalidStateError(string(b.status), string(StatusPreparing))
+	}
+	b.status = StatusPreparing
+	b.updatedAt = time.Now().UTC()
+	return nil
+}
+
+// MarkReadyForPickup transitions accepted_by_shop/preparing to ready and stores a fresh QR token.
+func (b *Booking) MarkReadyForPickup(shopID uuid.UUID, token string) error {
+	if b.shopID == nil || *b.shopID != shopID {
+		return domain.NewConflictError("booking does not belong to this shop")
+	}
+	if b.status != StatusAcceptedByShop && b.status != StatusPreparing && b.status != StatusReadyForPickup {
+		return domain.NewInvalidStateError(string(b.status), string(StatusReadyForPickup))
+	}
+	b.status = StatusReadyForPickup
+	b.qrPickupToken = &token
+	b.updatedAt = time.Now().UTC()
+	return nil
+}
+
+// VerifyPickup validates the QR token and moves the shop order to in_progress.
+func (b *Booking) VerifyPickup(runnerID uuid.UUID, token string) error {
+	if b.runnerID == nil || *b.runnerID != runnerID {
+		return domain.NewForbiddenError("not your booking")
+	}
+	ok, err := ValidateQRToken(b, token)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return domain.NewInvalidStateError("qr_expired", string(StatusInProgress))
+	}
+	if b.status != StatusReadyForPickup && b.status != StatusAccepted {
+		return domain.NewInvalidStateError(string(b.status), string(StatusInProgress))
+	}
+	now := time.Now().UTC()
+	b.status = StatusInProgress
+	b.pickedUpAt = &now
+	b.updatedAt = now
+	return nil
+}
+
 // StartDelivery transitions the booking from accepted to in_progress.
 func (b *Booking) StartDelivery() error {
+	if b.shopID != nil {
+		return domain.NewInvalidStateError(string(b.status), string(StatusInProgress))
+	}
 	if !b.status.CanTransitionTo(StatusInProgress) {
 		return domain.NewInvalidStateError(string(b.status), string(StatusInProgress))
 	}

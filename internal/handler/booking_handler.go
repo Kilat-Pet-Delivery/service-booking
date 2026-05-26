@@ -34,12 +34,95 @@ func (h *BookingHandler) RegisterRoutes(r *gin.RouterGroup, jwtManager *auth.JWT
 		bookings.GET("/:id", h.GetBooking)
 		bookings.POST("/:id/accept", middleware.RequireRole(auth.RoleRunner), h.AcceptBooking)
 		bookings.POST("/:id/decline", middleware.RequireRole(auth.RoleRunner), h.DeclineBooking)
+		bookings.POST("/:id/shop-accept", h.AcceptByShop)
+		bookings.POST("/:id/shop-preparing", h.MarkPreparing)
+		bookings.POST("/:id/shop-ready", h.MarkReadyForPickup)
+		bookings.POST("/:id/verify-pickup", middleware.RequireRole(auth.RoleRunner), h.VerifyPickup)
 		bookings.POST("/:id/pickup", middleware.RequireRole(auth.RoleRunner), h.StartDelivery)
 		bookings.POST("/:id/deliver", middleware.RequireRole(auth.RoleRunner), h.ConfirmDelivery)
 		bookings.POST("/:id/confirm", middleware.RequireRole(auth.RoleOwner), h.ConfirmDeliveryByOwner)
 		bookings.POST("/:id/cancel", h.CancelBooking)
 		bookings.POST("/:id/rebook", middleware.RequireRole(auth.RoleOwner), h.RebookBooking)
 	}
+}
+
+// AcceptByShop handles POST /api/v1/bookings/:id/shop-accept.
+func (h *BookingHandler) AcceptByShop(c *gin.Context) {
+	bookingID, shopID, ok := parseBookingAndShop(c)
+	if !ok {
+		return
+	}
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	result, err := h.service.AcceptByShop(c.Request.Context(), bookingID, shopID, userID, c.GetHeader("Idempotency-Key"))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// MarkPreparing handles POST /api/v1/bookings/:id/shop-preparing.
+func (h *BookingHandler) MarkPreparing(c *gin.Context) {
+	bookingID, shopID, ok := parseBookingAndShop(c)
+	if !ok {
+		return
+	}
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	result, err := h.service.MarkPreparing(c.Request.Context(), bookingID, shopID, userID, c.GetHeader("Idempotency-Key"))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// MarkReadyForPickup handles POST /api/v1/bookings/:id/shop-ready.
+func (h *BookingHandler) MarkReadyForPickup(c *gin.Context) {
+	bookingID, shopID, ok := parseBookingAndShop(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.MarkReadyForPickup(c.Request.Context(), bookingID, shopID, c.GetHeader("Idempotency-Key"))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// VerifyPickup handles POST /api/v1/bookings/:id/verify-pickup.
+func (h *BookingHandler) VerifyPickup(c *gin.Context) {
+	bookingID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "invalid booking ID")
+		return
+	}
+	runnerID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	result, err := h.service.VerifyPickup(c.Request.Context(), bookingID, runnerID, body.Token, c.GetHeader("Idempotency-Key"))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 // CreateBooking handles POST /api/v1/bookings.
@@ -267,4 +350,24 @@ func parsePagination(c *gin.Context) (int, int) {
 	}
 
 	return page, limit
+}
+
+func parseBookingAndShop(c *gin.Context) (uuid.UUID, uuid.UUID, bool) {
+	bookingID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "invalid booking ID")
+		return uuid.Nil, uuid.Nil, false
+	}
+	var body struct {
+		ShopID uuid.UUID `json:"shop_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, err.Error())
+		return uuid.Nil, uuid.Nil, false
+	}
+	if body.ShopID == uuid.Nil {
+		response.BadRequest(c, "shop_id is required")
+		return uuid.Nil, uuid.Nil, false
+	}
+	return bookingID, body.ShopID, true
 }

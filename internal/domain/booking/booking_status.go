@@ -6,22 +6,28 @@ import "fmt"
 type BookingStatus string
 
 const (
-	StatusRequested  BookingStatus = "requested"
-	StatusAccepted   BookingStatus = "accepted"
-	StatusInProgress BookingStatus = "in_progress"
-	StatusDelivered  BookingStatus = "delivered"
-	StatusCompleted  BookingStatus = "completed"
-	StatusCancelled  BookingStatus = "cancelled"
+	StatusRequested      BookingStatus = "requested"
+	StatusAccepted       BookingStatus = "accepted"
+	StatusAcceptedByShop BookingStatus = "accepted_by_shop"
+	StatusPreparing      BookingStatus = "preparing"
+	StatusReadyForPickup BookingStatus = "ready_for_pickup"
+	StatusInProgress     BookingStatus = "in_progress"
+	StatusDelivered      BookingStatus = "delivered"
+	StatusCompleted      BookingStatus = "completed"
+	StatusCancelled      BookingStatus = "cancelled"
 )
 
 // validTransitions defines the state machine for booking status transitions.
 var validTransitions = map[BookingStatus][]BookingStatus{
-	StatusRequested:  {StatusAccepted, StatusCancelled},
-	StatusAccepted:   {StatusInProgress, StatusCancelled, StatusRequested},
-	StatusInProgress: {StatusDelivered, StatusCancelled},
-	StatusDelivered:  {StatusCompleted},
-	StatusCompleted:  {},
-	StatusCancelled:  {},
+	StatusRequested:      {StatusAccepted, StatusAcceptedByShop, StatusCancelled},
+	StatusAcceptedByShop: {StatusPreparing, StatusReadyForPickup, StatusCancelled},
+	StatusPreparing:      {StatusReadyForPickup, StatusCancelled},
+	StatusReadyForPickup: {StatusAccepted, StatusInProgress, StatusCancelled},
+	StatusAccepted:       {StatusInProgress, StatusCancelled, StatusRequested},
+	StatusInProgress:     {StatusDelivered, StatusCancelled},
+	StatusDelivered:      {StatusCompleted},
+	StatusCompleted:      {},
+	StatusCancelled:      {},
 }
 
 // IsValid returns true if the status is a recognized booking status.

@@ -6,6 +6,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// BookingItem is one explicit shop order line item.
+type BookingItem struct {
+	BookingID     uuid.UUID
+	ProductID     uuid.UUID
+	Qty           int64
+	PriceMyrCents int64
+	SKU           string
+	Name          string
+}
+
 // BookingRepository defines the persistence contract for booking aggregates.
 type BookingRepository interface {
 	// FindByID retrieves a booking by its unique identifier.
@@ -31,4 +41,10 @@ type BookingRepository interface {
 
 	// Update persists changes to an existing booking with optimistic locking.
 	Update(ctx context.Context, booking *Booking) error
+
+	// SaveItems persists explicit line items for a booking.
+	SaveItems(ctx context.Context, bookingID uuid.UUID, items []BookingItem) error
+
+	// FindItemsByBookingID returns explicit line items for a booking.
+	FindItemsByBookingID(ctx context.Context, bookingID uuid.UUID) ([]BookingItem, error)
 }

@@ -20,6 +20,7 @@ type BookingModel struct {
 	BookingNumber       string          `gorm:"uniqueIndex;not null;size:20"`
 	OwnerID             uuid.UUID       `gorm:"type:uuid;index;not null"`
 	RunnerID            *uuid.UUID      `gorm:"type:uuid;index"`
+	ShopID              *uuid.UUID      `gorm:"type:uuid;index"`
 	Status              string          `gorm:"not null;size:30;index"`
 	PetSpec             json.RawMessage `gorm:"type:jsonb;not null"`
 	CrateRequirement    json.RawMessage `gorm:"type:jsonb;not null"`
@@ -35,6 +36,7 @@ type BookingModel struct {
 	CancelledAt         *time.Time      `gorm:""`
 	CancelNote          string          `gorm:"size:500"`
 	Notes               string          `gorm:"size:1000"`
+	QRPickupToken       *string         `gorm:"column:qr_pickup_token;size:32;index"`
 	Version             int64           `gorm:"not null;default:1"`
 	CreatedAt           time.Time       `gorm:"not null"`
 	UpdatedAt           time.Time       `gorm:"not null"`
@@ -44,6 +46,30 @@ type BookingModel struct {
 func (BookingModel) TableName() string {
 	return "bookings"
 }
+
+// BookingItemModel is the GORM model for explicit shop line items.
+type BookingItemModel struct {
+	BookingID     uuid.UUID `gorm:"type:uuid;primaryKey"`
+	ProductID     uuid.UUID `gorm:"type:uuid;primaryKey"`
+	Qty           int64     `gorm:"not null"`
+	PriceMyrCents int64     `gorm:"column:price_myr_cents;not null"`
+	SKU           string    `gorm:"size:100"`
+	Name          string    `gorm:"size:255"`
+	CreatedAt     time.Time `gorm:"not null"`
+}
+
+// TableName returns the table name for booking items.
+func (BookingItemModel) TableName() string { return "booking_items" }
+
+// IdempotencyKeyModel stores completed idempotent request hashes.
+type IdempotencyKeyModel struct {
+	Key         string    `gorm:"primaryKey;size:128"`
+	RequestHash string    `gorm:"column:request_hash;not null;size:64"`
+	CreatedAt   time.Time `gorm:"not null"`
+}
+
+// TableName returns the table name for idempotency keys.
+func (IdempotencyKeyModel) TableName() string { return "idempotency_keys" }
 
 // GormBookingRepository is the GORM-based implementation of BookingRepository.
 type GormBookingRepository struct {
@@ -166,23 +192,25 @@ func (r *GormBookingRepository) Update(ctx context.Context, bk *bookingDomain.Bo
 		Where("id = ? AND version = ?", model.ID, expectedVersion).
 		Updates(map[string]interface{}{
 			"runner_id":             model.RunnerID,
-			"status":               model.Status,
-			"pet_spec":             model.PetSpec,
-			"crate_requirement":    model.CrateRequirement,
-			"pickup_address":       model.PickupAddress,
-			"dropoff_address":      model.DropoffAddress,
-			"route_spec":           model.RouteSpec,
+			"shop_id":               model.ShopID,
+			"status":                model.Status,
+			"pet_spec":              model.PetSpec,
+			"crate_requirement":     model.CrateRequirement,
+			"pickup_address":        model.PickupAddress,
+			"dropoff_address":       model.DropoffAddress,
+			"route_spec":            model.RouteSpec,
 			"estimated_price_cents": model.EstimatedPriceCents,
-			"final_price_cents":    model.FinalPriceCents,
-			"currency":             model.Currency,
-			"scheduled_at":         model.ScheduledAt,
-			"picked_up_at":         model.PickedUpAt,
-			"delivered_at":         model.DeliveredAt,
-			"cancelled_at":         model.CancelledAt,
-			"cancel_note":          model.CancelNote,
-			"notes":                model.Notes,
-			"version":              model.Version,
-			"updated_at":           model.UpdatedAt,
+			"final_price_cents":     model.FinalPriceCents,
+			"currency":              model.Currency,
+			"scheduled_at":          model.ScheduledAt,
+			"picked_up_at":          model.PickedUpAt,
+			"delivered_at":          model.DeliveredAt,
+			"cancelled_at":          model.CancelledAt,
+			"cancel_note":           model.CancelNote,
+			"notes":                 model.Notes,
+			"qr_pickup_token":       model.QRPickupToken,
+			"version":               model.Version,
+			"updated_at":            model.UpdatedAt,
 		})
 
 	if result.Error != nil {
@@ -194,6 +222,45 @@ func (r *GormBookingRepository) Update(ctx context.Context, bk *bookingDomain.Bo
 	}
 
 	return nil
+}
+
+// SaveItems persists explicit line items for a booking.
+func (r *GormBookingRepository) SaveItems(ctx context.Context, bookingID uuid.UUID, items []bookingDomain.BookingItem) error {
+	for _, item := range items {
+		model := BookingItemModel{
+			BookingID:     bookingID,
+			ProductID:     item.ProductID,
+			Qty:           item.Qty,
+			PriceMyrCents: item.PriceMyrCents,
+			SKU:           item.SKU,
+			Name:          item.Name,
+			CreatedAt:     time.Now().UTC(),
+		}
+		if err := r.db.WithContext(ctx).Create(&model).Error; err != nil {
+			return fmt.Errorf("failed to save booking item: %w", err)
+		}
+	}
+	return nil
+}
+
+// FindItemsByBookingID returns explicit line items for a booking.
+func (r *GormBookingRepository) FindItemsByBookingID(ctx context.Context, bookingID uuid.UUID) ([]bookingDomain.BookingItem, error) {
+	var models []BookingItemModel
+	if err := r.db.WithContext(ctx).Where("booking_id = ?", bookingID).Find(&models).Error; err != nil {
+		return nil, fmt.Errorf("failed to find booking items: %w", err)
+	}
+	items := make([]bookingDomain.BookingItem, len(models))
+	for i, m := range models {
+		items[i] = bookingDomain.BookingItem{
+			BookingID:     m.BookingID,
+			ProductID:     m.ProductID,
+			Qty:           m.Qty,
+			PriceMyrCents: m.PriceMyrCents,
+			SKU:           m.SKU,
+			Name:          m.Name,
+		}
+	}
+	return items, nil
 }
 
 // ListAll retrieves all bookings with pagination (admin).
@@ -283,6 +350,7 @@ func toBookingModel(bk *bookingDomain.Booking) (*BookingModel, error) {
 		BookingNumber:       bk.BookingNumber(),
 		OwnerID:             bk.OwnerID(),
 		RunnerID:            bk.RunnerID(),
+		ShopID:              bk.ShopID(),
 		Status:              string(bk.Status()),
 		PetSpec:             petSpecJSON,
 		CrateRequirement:    crateReqJSON,
@@ -298,6 +366,7 @@ func toBookingModel(bk *bookingDomain.Booking) (*BookingModel, error) {
 		CancelledAt:         bk.CancelledAt(),
 		CancelNote:          bk.CancelNote(),
 		Notes:               bk.Notes(),
+		QRPickupToken:       bk.QRPickupToken(),
 		Version:             bk.Version(),
 		CreatedAt:           bk.CreatedAt(),
 		UpdatedAt:           bk.UpdatedAt(),
@@ -344,6 +413,7 @@ func toDomainBooking(m *BookingModel) (*bookingDomain.Booking, error) {
 		m.BookingNumber,
 		m.OwnerID,
 		m.RunnerID,
+		m.ShopID,
 		status,
 		petSpec,
 		crateReq,
@@ -359,6 +429,7 @@ func toDomainBooking(m *BookingModel) (*bookingDomain.Booking, error) {
 		m.CancelledAt,
 		m.CancelNote,
 		m.Notes,
+		m.QRPickupToken,
 		m.Version,
 		m.CreatedAt,
 		m.UpdatedAt,

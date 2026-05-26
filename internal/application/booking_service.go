@@ -2,8 +2,12 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Kilat-Pet-Delivery/lib-common/domain"
@@ -19,37 +23,50 @@ import (
 
 // CreateBookingRequest holds the data needed to create a new booking.
 type CreateBookingRequest struct {
-	PetSpec        dto.PetSpecDTO  `json:"pet_spec" binding:"required"`
-	PickupAddress  dto.AddressDTO  `json:"pickup_address" binding:"required"`
-	DropoffAddress dto.AddressDTO  `json:"dropoff_address" binding:"required"`
-	ScheduledAt    *time.Time      `json:"scheduled_at"`
-	Notes          string          `json:"notes"`
+	PetSpec        dto.PetSpecDTO       `json:"pet_spec" binding:"required"`
+	PickupAddress  dto.AddressDTO       `json:"pickup_address" binding:"required"`
+	DropoffAddress dto.AddressDTO       `json:"dropoff_address" binding:"required"`
+	ShopID         *uuid.UUID           `json:"shop_id,omitempty"`
+	Items          []BookingItemRequest `json:"items,omitempty"`
+	ScheduledAt    *time.Time           `json:"scheduled_at"`
+	Notes          string               `json:"notes"`
+}
+
+// BookingItemRequest is one explicit shop line item.
+type BookingItemRequest struct {
+	ProductID     uuid.UUID `json:"product_id" binding:"required"`
+	Qty           int64     `json:"qty" binding:"required"`
+	PriceMyrCents int64     `json:"price_myr_cents" binding:"required"`
+	SKU           string    `json:"sku,omitempty"`
+	Name          string    `json:"name,omitempty"`
 }
 
 // BookingDTO is the response representation of a booking.
 type BookingDTO struct {
-	ID                  uuid.UUID              `json:"id"`
-	BookingNumber       string                 `json:"booking_number"`
-	OwnerID             uuid.UUID              `json:"owner_id"`
-	RunnerID            *uuid.UUID             `json:"runner_id,omitempty"`
-	Status              string                 `json:"status"`
-	PetSpec             bookingDomain.PetSpecification  `json:"pet_spec"`
-	CrateReq            bookingDomain.CrateRequirement  `json:"crate_requirement"`
-	PickupAddress       dto.AddressDTO         `json:"pickup_address"`
-	DropoffAddress      dto.AddressDTO         `json:"dropoff_address"`
+	ID                  uuid.UUID                         `json:"id"`
+	BookingNumber       string                            `json:"booking_number"`
+	OwnerID             uuid.UUID                         `json:"owner_id"`
+	RunnerID            *uuid.UUID                        `json:"runner_id,omitempty"`
+	ShopID              *uuid.UUID                        `json:"shop_id,omitempty"`
+	Status              string                            `json:"status"`
+	PetSpec             bookingDomain.PetSpecification    `json:"pet_spec"`
+	CrateReq            bookingDomain.CrateRequirement    `json:"crate_requirement"`
+	PickupAddress       dto.AddressDTO                    `json:"pickup_address"`
+	DropoffAddress      dto.AddressDTO                    `json:"dropoff_address"`
 	RouteSpec           *bookingDomain.RouteSpecification `json:"route_spec,omitempty"`
-	EstimatedPriceCents int64                  `json:"estimated_price_cents"`
-	FinalPriceCents     *int64                 `json:"final_price_cents,omitempty"`
-	Currency            string                 `json:"currency"`
-	ScheduledAt         *time.Time             `json:"scheduled_at,omitempty"`
-	PickedUpAt          *time.Time             `json:"picked_up_at,omitempty"`
-	DeliveredAt         *time.Time             `json:"delivered_at,omitempty"`
-	CancelledAt         *time.Time             `json:"cancelled_at,omitempty"`
-	CancelNote          string                 `json:"cancel_note,omitempty"`
-	Notes               string                 `json:"notes,omitempty"`
-	Version             int64                  `json:"version"`
-	CreatedAt           time.Time              `json:"created_at"`
-	UpdatedAt           time.Time              `json:"updated_at"`
+	EstimatedPriceCents int64                             `json:"estimated_price_cents"`
+	FinalPriceCents     *int64                            `json:"final_price_cents,omitempty"`
+	Currency            string                            `json:"currency"`
+	ScheduledAt         *time.Time                        `json:"scheduled_at,omitempty"`
+	PickedUpAt          *time.Time                        `json:"picked_up_at,omitempty"`
+	DeliveredAt         *time.Time                        `json:"delivered_at,omitempty"`
+	CancelledAt         *time.Time                        `json:"cancelled_at,omitempty"`
+	CancelNote          string                            `json:"cancel_note,omitempty"`
+	Notes               string                            `json:"notes,omitempty"`
+	QRPickupToken       *string                           `json:"qr_pickup_token,omitempty"`
+	Version             int64                             `json:"version"`
+	CreatedAt           time.Time                         `json:"created_at"`
+	UpdatedAt           time.Time                         `json:"updated_at"`
 }
 
 // BookingService is the application service orchestrating booking use cases.
@@ -117,6 +134,7 @@ func (s *BookingService) CreateBooking(ctx context.Context, ownerID uuid.UUID, r
 		domain.CurrencyMYR,
 		req.ScheduledAt,
 		req.Notes,
+		req.ShopID,
 	)
 	if err != nil {
 		return nil, err
@@ -126,10 +144,159 @@ func (s *BookingService) CreateBooking(ctx context.Context, ownerID uuid.UUID, r
 	if err := s.repo.Save(ctx, bk); err != nil {
 		return nil, fmt.Errorf("failed to save booking: %w", err)
 	}
+	if len(req.Items) > 0 {
+		items := make([]bookingDomain.BookingItem, len(req.Items))
+		for i, item := range req.Items {
+			items[i] = bookingDomain.BookingItem{
+				BookingID:     bk.ID(),
+				ProductID:     item.ProductID,
+				Qty:           item.Qty,
+				PriceMyrCents: item.PriceMyrCents,
+				SKU:           item.SKU,
+				Name:          item.Name,
+			}
+		}
+		if err := s.repo.SaveItems(ctx, bk.ID(), items); err != nil {
+			return nil, err
+		}
+	}
 
 	// Publish BookingRequestedEvent
 	s.publishBookingRequested(ctx, bk)
 
+	result := toBookingDTO(bk)
+	return &result, nil
+}
+
+// AcceptByShop accepts an incoming shop order.
+func (s *BookingService) AcceptByShop(ctx context.Context, bookingID, shopID, actorUserID uuid.UUID, key string) (*BookingDTO, error) {
+	hash := idempotencyHash("shop-accept", bookingID.String(), shopID.String())
+	replay, err := s.checkIdempotency(ctx, key, hash)
+	if err != nil {
+		return nil, err
+	}
+	bk, err := s.repo.FindByID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	if !replay {
+		if err := bk.AcceptByShop(shopID); err != nil {
+			return nil, err
+		}
+		bk.IncrementVersion()
+		if err := s.repo.Update(ctx, bk); err != nil {
+			return nil, err
+		}
+		s.publishEvent(ctx, events.TopicBookingEvents, events.BookingAcceptedByShop, bk.ID().String(), events.BookingAcceptedByShopEvent{
+			BookingID:     bk.ID(),
+			BookingNumber: bk.BookingNumber(),
+			ShopID:        shopID,
+			AcceptedBy:    actorUserID,
+			OccurredAt:    time.Now().UTC(),
+		})
+		if err := s.markIdempotent(ctx, key, hash); err != nil {
+			return nil, err
+		}
+	}
+	result := toBookingDTO(bk)
+	return &result, nil
+}
+
+// MarkPreparing moves a shop order into preparing.
+func (s *BookingService) MarkPreparing(ctx context.Context, bookingID, shopID, actorUserID uuid.UUID, key string) (*BookingDTO, error) {
+	hash := idempotencyHash("shop-preparing", bookingID.String(), shopID.String())
+	replay, err := s.checkIdempotency(ctx, key, hash)
+	if err != nil {
+		return nil, err
+	}
+	bk, err := s.repo.FindByID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	if !replay {
+		if err := bk.MarkPreparing(shopID); err != nil {
+			return nil, err
+		}
+		bk.IncrementVersion()
+		if err := s.repo.Update(ctx, bk); err != nil {
+			return nil, err
+		}
+		s.publishEvent(ctx, events.TopicBookingEvents, events.BookingPreparing, bk.ID().String(), events.BookingPreparingEvent{
+			BookingID:     bk.ID(),
+			BookingNumber: bk.BookingNumber(),
+			ShopID:        shopID,
+			StartedBy:     actorUserID,
+			OccurredAt:    time.Now().UTC(),
+		})
+		if err := s.markIdempotent(ctx, key, hash); err != nil {
+			return nil, err
+		}
+	}
+	result := toBookingDTO(bk)
+	return &result, nil
+}
+
+// MarkReadyForPickup moves a shop order to ready_for_pickup and generates a QR token.
+func (s *BookingService) MarkReadyForPickup(ctx context.Context, bookingID, shopID uuid.UUID, key string) (*BookingDTO, error) {
+	hash := idempotencyHash("shop-ready", bookingID.String(), shopID.String())
+	replay, err := s.checkIdempotency(ctx, key, hash)
+	if err != nil {
+		return nil, err
+	}
+	bk, err := s.repo.FindByID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	if !replay {
+		token, err := bookingDomain.GenerateQRToken()
+		if err != nil {
+			return nil, err
+		}
+		if err := bk.MarkReadyForPickup(shopID, token); err != nil {
+			return nil, err
+		}
+		bk.IncrementVersion()
+		if err := s.repo.Update(ctx, bk); err != nil {
+			return nil, err
+		}
+		s.publishEvent(ctx, events.TopicBookingEvents, events.BookingReadyForPickup, bk.ID().String(), events.BookingReadyForPickupEvent{
+			BookingID:     bk.ID(),
+			BookingNumber: bk.BookingNumber(),
+			ShopID:        shopID,
+			QRPickupToken: token,
+			OccurredAt:    time.Now().UTC(),
+		})
+		if err := s.markIdempotent(ctx, key, hash); err != nil {
+			return nil, err
+		}
+	}
+	result := toBookingDTO(bk)
+	return &result, nil
+}
+
+// VerifyPickup validates the QR token and starts the delivery for an assigned runner.
+func (s *BookingService) VerifyPickup(ctx context.Context, bookingID, runnerID uuid.UUID, token, key string) (*BookingDTO, error) {
+	hash := idempotencyHash("verify-pickup", bookingID.String(), runnerID.String(), token)
+	replay, err := s.checkIdempotency(ctx, key, hash)
+	if err != nil {
+		return nil, err
+	}
+	bk, err := s.repo.FindByID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	if !replay {
+		if err := bk.VerifyPickup(runnerID, token); err != nil {
+			return nil, err
+		}
+		bk.IncrementVersion()
+		if err := s.repo.Update(ctx, bk); err != nil {
+			return nil, err
+		}
+		if err := s.markIdempotent(ctx, key, hash); err != nil {
+			return nil, err
+		}
+	}
 	result := toBookingDTO(bk)
 	return &result, nil
 }
@@ -221,6 +388,7 @@ func (s *BookingService) ConfirmDelivery(ctx context.Context, bookingID uuid.UUI
 		OccurredAt:    time.Now().UTC(),
 	}
 	s.publishEvent(ctx, events.TopicBookingEvents, events.BookingDeliveryConfirmed, bk.ID().String(), evt)
+	s.publishBookingDelivered(ctx, bk)
 
 	result := toBookingDTO(bk)
 	return &result, nil
@@ -480,6 +648,7 @@ func toBookingDTO(bk *bookingDomain.Booking) BookingDTO {
 		BookingNumber:       bk.BookingNumber(),
 		OwnerID:             bk.OwnerID(),
 		RunnerID:            bk.RunnerID(),
+		ShopID:              bk.ShopID(),
 		Status:              string(bk.Status()),
 		PetSpec:             bk.PetSpec(),
 		CrateReq:            bk.CrateReq(),
@@ -495,10 +664,68 @@ func toBookingDTO(bk *bookingDomain.Booking) BookingDTO {
 		CancelledAt:         bk.CancelledAt(),
 		CancelNote:          bk.CancelNote(),
 		Notes:               bk.Notes(),
+		QRPickupToken:       bk.QRPickupToken(),
 		Version:             bk.Version(),
 		CreatedAt:           bk.CreatedAt(),
 		UpdatedAt:           bk.UpdatedAt(),
 	}
+}
+
+const BookingDelivered = "booking.delivered"
+
+type bookingDeliveredEvent struct {
+	BookingID       uuid.UUID                  `json:"booking_id"`
+	BookingNumber   string                     `json:"booking_number"`
+	ShopID          uuid.UUID                  `json:"shop_id"`
+	DeliveredAt     time.Time                  `json:"delivered_at"`
+	Currency        string                     `json:"currency"`
+	GrossSalesCents int64                      `json:"gross_sales_cents"`
+	NetSalesCents   int64                      `json:"net_sales_cents"`
+	Items           []bookingDeliveredLineItem `json:"items"`
+}
+
+type bookingDeliveredLineItem struct {
+	ProductID     uuid.UUID `json:"product_id"`
+	SKU           string    `json:"sku"`
+	Name          string    `json:"name"`
+	Qty           int64     `json:"qty"`
+	PriceMyrCents int64     `json:"price_myr_cents"`
+}
+
+func (s *BookingService) publishBookingDelivered(ctx context.Context, bk *bookingDomain.Booking) {
+	if bk.ShopID() == nil || bk.DeliveredAt() == nil {
+		return
+	}
+	items, err := s.repo.FindItemsByBookingID(ctx, bk.ID())
+	if err != nil {
+		s.logger.Error("failed to load booking items for delivered event", zap.Error(err))
+		return
+	}
+	payloadItems := make([]bookingDeliveredLineItem, len(items))
+	var gross int64
+	for i, item := range items {
+		payloadItems[i] = bookingDeliveredLineItem{
+			ProductID:     item.ProductID,
+			SKU:           item.SKU,
+			Name:          item.Name,
+			Qty:           item.Qty,
+			PriceMyrCents: item.PriceMyrCents,
+		}
+		gross += item.Qty * item.PriceMyrCents
+	}
+	if gross == 0 {
+		gross = bk.EstimatedPriceCents()
+	}
+	s.publishEvent(ctx, events.TopicBookingEvents, BookingDelivered, bk.ID().String(), bookingDeliveredEvent{
+		BookingID:       bk.ID(),
+		BookingNumber:   bk.BookingNumber(),
+		ShopID:          *bk.ShopID(),
+		DeliveredAt:     *bk.DeliveredAt(),
+		Currency:        bk.Currency(),
+		GrossSalesCents: gross,
+		NetSalesCents:   gross,
+		Items:           payloadItems,
+	})
 }
 
 func buildPetSpecification(petDTO dto.PetSpecDTO) bookingDomain.PetSpecification {
@@ -544,6 +771,9 @@ func (s *BookingService) publishBookingRequested(ctx context.Context, bk *bookin
 }
 
 func (s *BookingService) publishEvent(ctx context.Context, topic, eventType, key string, data interface{}) {
+	if s.producer == nil {
+		return
+	}
 	cloudEvent, err := kafka.NewCloudEvent("service-booking", eventType, data)
 	if err != nil {
 		s.logger.Error("failed to create cloud event",
@@ -560,6 +790,37 @@ func (s *BookingService) publishEvent(ctx context.Context, topic, eventType, key
 			zap.Error(err),
 		)
 	}
+}
+
+func (s *BookingService) checkIdempotency(ctx context.Context, key, requestHash string) (bool, error) {
+	if strings.TrimSpace(key) == "" {
+		return false, domain.NewValidationError("Idempotency-Key header is required")
+	}
+	var row repository.IdempotencyKeyModel
+	err := s.db.WithContext(ctx).Where("key = ?", key).Take(&row).Error
+	if err == nil {
+		if row.RequestHash != requestHash {
+			return false, domain.NewConflictError("idempotency key reused with different request")
+		}
+		return true, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (s *BookingService) markIdempotent(ctx context.Context, key, requestHash string) error {
+	return s.db.WithContext(ctx).Create(&repository.IdempotencyKeyModel{
+		Key:         key,
+		RequestHash: requestHash,
+		CreatedAt:   time.Now().UTC(),
+	}).Error
+}
+
+func idempotencyHash(parts ...string) string {
+	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hex.EncodeToString(h[:])
 }
 
 // haversineDistance calculates the distance between two coordinates in kilometers.
